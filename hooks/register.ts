@@ -3,16 +3,34 @@ import type { EngineInterface, Register, SessionRateLimit } from 'claude-code'
 // Watches the 5-hour and 7-day usage windows, warns, then pauses the session at a
 // safe point: a notice on a tool result, a short grace, then a gate on non-handoff
 // tools, one Stop block, and validation of the handoff when Claude writes it.
-// State is per module, so per session (a dev reload starts over).
+// State is mirrored to $.store per session, so a plugin reload mid-pause keeps the gate.
 
 type $ = EngineInterface
 type Phase = 'normal' | 'warned' | 'pausing' | 'gated' | 'paused'
 type Kind = 'five_hour' | 'seven_day'
-type Calibration = { at: string; kind: Kind; usedAtNotice: number; usedAtDone: number; toolCalls: number; contextTokens?: number; model?: string }
+type Outcome = 'verified' | 'fallback' | 'released' | 'reset'
+type Calibration = { at: string; kind: Kind; usedAtNotice: number; usedAtDone: number; toolCalls: number; contextTokens?: number; model?: string; outcome?: Outcome; denials?: number; fixes?: number }
 
 const LABEL: Record<Kind, string> = { five_hour: '5-hour', seven_day: '7-day' }
 const REQUIRED = ['Goal', 'Status', 'Next steps', 'Repo state']
-const SECRET = /sk-ant-|ghp_[A-Za-z0-9]|AKIA[0-9A-Z]{8}|-----BEGIN/
+// Merged from handoff-now's redaction list plus common provider prefixes.
+const SECRETS = [
+  /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/,
+  /sk-ant-[A-Za-z0-9_-]{20,}/,
+  /\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}/,
+  /\bgh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}/,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\bxox[abprs]-[A-Za-z0-9-]{10,}/,
+  /\bAIza[0-9A-Za-z_-]{35}\b/,
+  /authorization\s*[:=]\s*(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}/i,
+  /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp):\/\/[^\s:@/]+:[^\s@/]+@/i,
+  /^\s*(?:export\s+)?[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)[A-Z0-9_]*\s*=\s*['"]?[^\s'"$<{]{8,}/m,
+]
+// Read-only git with no shell operators: what the handoff's Repo state needs (handoff-now's rule).
+// `branch` only lists; `--output`, `--ext-diff` and `--textconv` would write files or run programs.
+const SAFE_GIT = /^git\s+(?:(?:status|diff|log|show|rev-parse)(?![^\n]*--(?:output|ext-diff|textconv))(?:\s[^;&|<>`$\n\\]*)?|branch(?:\s+(?:--show-current|-a|-r|-vv?|--list))*)$/
+const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'TodoWrite'])
+const MAX_FIXES = 3
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit'])
 const AGENT_TOOLS = new Set(['Agent', 'Task'])
 
@@ -39,18 +57,64 @@ let contextTokens: number | undefined
 const windows = new Map<Kind, { key: string; used: number; resetsAt?: string; fired: Set<'warn' | 'pause'> }>()
 let pending: string | undefined
 let owner: Kind | undefined // the window behind the current warn or pause
-let pause: { kind: Kind; usedAtNotice: number; calls: number; root: string; path: string; prompt: string; notice: string; stopBlocked: boolean } | undefined
+let pause: { kind: Kind; usedAtNotice: number; calls: number; root: string; path: string; prompt: string; notice: string; stopBlocked: boolean; head?: string; fixes?: number; denials?: number } | undefined
+let storeKey: string | undefined // `session:<id>`, set at session.start
+
+// Saved after every change so a /reload-plugins (Desktop reloads every open session) keeps a pause.
+let savedJson = ''
+async function save($: $) {
+  if (!storeKey) return
+  const w = [...windows].map(([k, v]) => [k, { ...v, fired: [...v.fired] }])
+  const json = JSON.stringify({ phase, owner, pending, pause, hasData, windows: w })
+  if (json === savedJson) return // most tool calls change nothing; keep store writes rare
+  savedJson = json
+  await $.store.set(storeKey, { ...JSON.parse(json), at: await $.clock.now() }).catch(() => {})
+}
+
+// A new session id (a /clear, or a fresh load) starts from nothing, then from what was saved for it.
+function resetState() {
+  phase = 'normal'; owner = undefined; pending = undefined; pause = undefined
+  hasData = false; saidNoData = false; simulated = undefined; simulateAfter = undefined
+  windows.clear(); savedJson = ''
+}
+
+async function restore($: $) {
+  const s = (await $.store.get(storeKey!).catch(() => undefined)) as
+    | { phase: Phase; owner?: Kind; pending?: string; pause?: typeof pause; hasData: boolean; windows: [Kind, { key: string; used: number; resetsAt?: string; fired: ('warn' | 'pause')[] }][] }
+    | undefined
+  if (!s) return
+  ;({ phase, owner, pending, pause, hasData } = s)
+  for (const [k, v] of s.windows) windows.set(k, { ...v, fired: new Set(v.fired) })
+}
+
+// Desktop hooks may run without PATH (agent-layer 0.2.0), so fall back to the system git.
+async function git($: $, ...a: string[]) {
+  for (const bin of ['git', '/usr/bin/git']) {
+    const r = await $.process.run([bin, ...a], { timeoutMs: 5000 }).catch(() => undefined)
+    if (r) return r.exitCode === 0 ? r.stdout.trim() : ''
+  }
+  return ''
+}
 
 const isHandoffFile = (p: unknown) =>
   typeof p === 'string' && p.endsWith('.md') && !p.split('/').includes('..') &&
   (p.includes(`/${cfg.dir}/`) || p.startsWith(`${cfg.dir}/`))
+// While pausing only the exact path the resume prompt names counts: another file there would
+// leave the prompt pointing at a file that does not exist.
+const isPauseFile = (p: unknown) => isHandoffFile(p) && (!pause || p === pause.path)
 const isHandoffCall = (e: { tool: string; [k: string]: unknown }) =>
   e.tool === 'Skill'
     ? String(e.skill ?? '').endsWith('writing-handoffs')
-    : (FILE_TOOLS.has(e.tool) || e.tool === 'Read') && isHandoffFile(e.file_path)
+    : (FILE_TOOLS.has(e.tool) || e.tool === 'Read') && isPauseFile(e.file_path)
+// What the gate lets through besides the handoff: reads and read-only git, so the handoff can be accurate.
+const isRescueCall = (e: { tool: string; [k: string]: unknown }) =>
+  READ_TOOLS.has(String(e.tool)) || (e.tool === 'Bash' && SAFE_GIT.test(String(e.command ?? '').trim()))
 
 async function onReading($: $, rateLimits: readonly SessionRateLimit[]) {
-  let limits = rateLimits.filter((r): r is SessionRateLimit & { kind: Kind } => r.kind === 'five_hour' || r.kind === 'seven_day')
+  const now = await $.clock.now()
+  // A window whose reset time has passed is a stale reading, not current usage.
+  let limits = rateLimits.filter((r): r is SessionRateLimit & { kind: Kind } =>
+    (r.kind === 'five_hour' || r.kind === 'seven_day') && !(r.resetsAt && Date.parse(r.resetsAt) <= now))
   if (simulated !== undefined) {
     // No resetsAt: a stable window key, so real readings never look like a reset.
     limits = [...limits.filter(r => r.kind !== 'five_hour'), { kind: 'five_hour', percentUsed: 100 - simulated }]
@@ -68,7 +132,10 @@ async function onReading($: $, rateLimits: readonly SessionRateLimit[]) {
     let w = windows.get(r.kind)
     if (!w || w.key !== key) {
       // A new window (first reading or a reset): thresholds fire again.
-      if (w && owner === r.kind) { phase = 'normal'; owner = undefined; pause = undefined; pending = undefined }
+      if (w && owner === r.kind) {
+        if (pause && (phase === 'pausing' || phase === 'gated')) await logOutcome($, 'reset')
+        phase = 'normal'; owner = undefined; pause = undefined; pending = undefined
+      }
       w = { key, used: r.percentUsed, resetsAt: r.resetsAt, fired: new Set() }
       windows.set(r.kind, w)
     }
@@ -99,33 +166,34 @@ function usage(kind: Kind, used: number, resetsAt?: string) {
 }
 
 async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {
-  const git = (...a: string[]) => $.process.run(['git', ...a], { timeoutMs: 5000 }).then(r => (r.exitCode === 0 ? r.stdout.trim() : ''), () => '')
-  const top = await git('rev-parse', '--show-toplevel')
+  const top = await git($, 'rev-parse', '--show-toplevel')
   const root = top || (await $.session.cwd())
   const dir = `${root}/${cfg.dir}`
   const base = `${dir}/${stamp(new Date(await $.clock.now()), 'T')}-auto-pause`
   let path = `${base}.md`
   for (let n = 2; await $.fs.exists(path).catch(() => false); n++) path = `${base}-${n}.md`
   let repo = 'not a git repository'
+  let head: string | undefined
   let check = 'Check its "Repo state" section, then start with Next step 1.'
   if (top) {
-    const branch = (await git('branch', '--show-current')) || '(detached)'
-    const files = (await git('status', '--porcelain')).split('\n').map(l => l.trim()).filter(Boolean)
-    repo = `branch ${branch} · uncommitted: ${files.length ? files.slice(0, 12).join(', ') + (files.length > 12 ? `, +${files.length - 12} more` : '') : 'none'}`
+    const branch = (await git($, 'branch', '--show-current')) || '(detached)'
+    head = (await git($, 'rev-parse', '--short', 'HEAD')) || undefined
+    const files = (await git($, 'status', '--porcelain')).split('\n').map(l => l.trim()).filter(Boolean)
+    repo = `branch ${branch}${head ? ` · HEAD ${head} (copy it into "## Repo state")` : ''} · uncommitted: ${files.length ? files.slice(0, 12).join(', ') + (files.length > 12 ? `, +${files.length - 12} more` : '') : 'none'}`
     check = 'Check that `git status` matches its "Repo state" section, then start with Next step 1.'
-    await excludeDir($, await git('rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'), root)
+    await excludeDir($, await git($, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'), root)
   }
   const prompt = `Resume paused work in ${root}.\nRead ${path} first. It is your only context from the previous session.\n${check}\nRead only the files it points to unless you need more.`
   const notice = [
     `AUTO-PAUSE: pause threshold reached. ${usage(kind, used, resetsAt)}`,
-    `Do not start new work. Finish or revert the step in progress (at most ${cfg.gateCalls} more tool calls), then use the writing-handoffs skill.`,
+    `Do not start new work. Finish or revert the step in progress (at most ${cfg.gateCalls} more tool calls), then use the writing-handoffs skill and write exactly the handoff path below.`,
     `Handoff path: ${path}`,
     `Repo state: ${repo}`,
     'Resume prompt (put it verbatim at the top of the handoff, and end your turn with it in a code block):',
     prompt,
   ].join('\n')
   phase = 'pausing'
-  pause = { kind, usedAtNotice: used, calls: 0, root, path, prompt, notice, stopBlocked: false }
+  pause = { kind, usedAtNotice: used, calls: 0, root, path, prompt, notice, stopBlocked: false, head, fixes: 0, denials: 0 }
   pending = notice
 }
 
@@ -139,7 +207,7 @@ async function excludeDir($: $, exclude: string, root: string) {
   await $.fs.write(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`).catch(() => {})
 }
 
-function validate(text: string) {
+function validate(text: string, headNow = '') {
   const problems: string[] = []
   const top = text.split('\n').slice(0, 25).join('\n')
   const flat = (s: string) => s.replace(/\s+/g, ' ').trim()
@@ -152,29 +220,90 @@ function validate(text: string) {
   if (words > cfg.words * 1.2) problems.push(`Cut it to about ${cfg.words} words (now ${words}).`)
   for (const block of text.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm))
     if ((block[1] ?? '').split('\n').length - 1 > 15) { problems.push('Replace code blocks over 15 lines with path:line pointers.'); break }
-  if (SECRET.test(text)) problems.push('Remove the secret-looking string (key, token, or private key).')
+  const repo = /^##\s+Repo state\b[^\n]*\n([\s\S]*?)(?=^##\s|(?![\s\S]))/im.exec(text)
+  // Either the commit at the pause or the current one (Claude may have committed during the grace calls).
+  const heads = [pause?.head, headNow].filter((h): h is string => !!h)
+  if (heads.length && repo && !heads.some(h => (repo[1] ?? '').includes(h))) problems.push(`"## Repo state" must name HEAD ${headNow || heads[0]}, the commit this handoff was written at.`)
+  if (SECRETS.some(re => re.test(text))) problems.push('Remove the secret-looking string (key, token, password, or private key).')
   return problems
 }
 
-async function finishPause($: $) {
-  if (!pause) return
-  const w = windows.get(pause.kind)
+async function logOutcome($: $, outcome: Outcome) {
+  if (!pause || simulated !== undefined) return // simulated readings would skew the calibration
   const entry: Calibration = {
     at: new Date(await $.clock.now()).toISOString(), kind: pause.kind, usedAtNotice: pause.usedAtNotice,
-    usedAtDone: w?.used ?? pause.usedAtNotice, toolCalls: pause.calls, contextTokens,
+    usedAtDone: windows.get(pause.kind)?.used ?? pause.usedAtNotice, toolCalls: pause.calls, contextTokens,
     model: await $.session.model().then(m => String(m), () => undefined),
+    outcome, denials: pause.denials, fixes: pause.fixes,
   }
-  phase = 'paused'
-  await $.store.set(`last:${pause.root}`, { path: pause.path, prompt: pause.prompt, at: entry.at })
-  if (simulated !== undefined) return // simulated readings would skew the calibration
   const log = ((await $.store.get('calibration')) as Calibration[] | undefined) ?? []
   await $.store.set('calibration', [...log, entry].slice(-100))
+}
+
+async function finishPause($: $, outcome: Outcome = 'verified') {
+  if (!pause) return
+  phase = 'paused'
+  pending = undefined
+  // A manual release before any handoff exists must not leave a prompt pointing at no file.
+  if (outcome === 'released' && !(await $.fs.exists(pause.path).catch(() => false))) return logOutcome($, outcome)
+  await $.store.set(`last:${pause.root}`, { path: pause.path, prompt: pause.prompt, at: new Date(await $.clock.now()).toISOString(), outcome })
+  await logOutcome($, outcome)
+}
+
+// A facts-only handoff the mod writes itself when Claude could not write a checked one
+// (MohammadMD1383's StopFailure snapshot). No model turn, so it works at the limit too.
+async function writeFallback($: $, why: string) {
+  if (!pause) return
+  const msgs = await $.session.messages().catch(() => [])
+  let ask = [...msgs].reverse().find(m => m.role === 'user' && m.text.trim())?.text.trim()
+  for (const re of SECRETS) ask = ask?.replace(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g'), '[redacted]')
+  const edited = [...new Set(msgs.flatMap(m => m.toolUses ?? []).filter(u => FILE_TOOLS.has(u.tool)).map(u => String(u.input.file_path)))]
+  const partial = await $.fs.exists(pause.path).catch(() => false)
+  if (partial) {
+    // Keep what Claude wrote; point the prompt at the facts file.
+    const facts = pause.path.replace(/\.md$/, '-facts.md')
+    pause.prompt = pause.prompt.replace(pause.path, facts)
+    pause.path = facts
+  }
+  const branch = await git($, 'branch', '--show-current')
+  const status = (await git($, 'status', '--porcelain')).split('\n').filter(Boolean)
+  const text = [
+    '# Handoff: facts only (written by auto-pause)',
+    '',
+    `${why} This file holds only what the plugin could read without a model call.${partial ? ' A partial handoff from Claude sits beside it, without "-facts".' : ''}`,
+    '',
+    '```text', pause.prompt, '```',
+    '',
+    '## Goal', ask ? `Last user request (verbatim, first 600 characters): ${ask.slice(0, 600)}` : 'Unknown: read the old session.',
+    '',
+    '## Status', edited.length ? `Files edited in the old session: ${edited.slice(0, 30).join(', ')}` : 'Unknown.',
+    '',
+    '## Next steps', '1. Run `git status` and `git diff` to see the unfinished change, then confirm the plan with the user before editing.',
+    '',
+    '## Repo state', pause.head ? `${branch || '(detached)'} · HEAD ${(await git($, 'rev-parse', '--short', 'HEAD')) || pause.head}` : 'not a git repository', ...status.slice(0, 40).map(l => `- ${l}`),
+    '',
+  ].join('\n')
+  await $.fs.write(pause.path, text)
+  await finishPause($, 'fallback')
+  // Toasts do not render in Desktop (Phase 0); a native notification does.
+  await $.ui.notify(`Facts-only handoff written: ${pause.path}. /auto-pause-status shows the resume prompt.`, { title: 'auto-pause' }).catch(() => undefined)
 }
 
 export const register: Register = (on, options) => {
   cfg = config(options as Record<string, unknown>)
 
   on('session.start', async ($, e, next) => {
+    const id = `session:${await $.session.id().catch(() => 'unknown')}`
+    if (id !== storeKey) resetState()
+    storeKey = id
+    await restore($)
+    // Drop state of sessions untouched for 8 days so the store stays small.
+    const now = await $.clock.now()
+    for (const k of await $.store.keys().catch(() => [] as string[])) {
+      if (!k.startsWith('session:') || k === storeKey) continue
+      const at = ((await $.store.get(k).catch(() => undefined)) as { at?: number } | undefined)?.at
+      if (!at || now - at > 8 * 24 * 3600e3) await $.store.delete(k).catch(() => {})
+    }
     // Dev-only. The EVAL_ copies exist because claude plugin eval passes only EVAL_* vars to a case.
     const sim = (await $.env.get('AUTO_PAUSE_SIMULATE_PERCENT_LEFT')) || (await $.env.get('EVAL_AUTO_PAUSE_SIMULATE_PERCENT_LEFT'))
     if (sim !== undefined && sim !== '' && !Number.isNaN(Number(sim))) {
@@ -182,13 +311,14 @@ export const register: Register = (on, options) => {
       if (after > 0) simulateAfter = { calls: after, left: Number(sim) }
       else { simulated = Number(sim); await onReading($, []) }
     }
-    await $.command.register({ name: 'auto-pause-status', description: 'Show auto-pause state, the latest resume prompt for this folder, and calibration.' }).catch(() => {})
+    await $.command.register({ name: 'auto-pause-status', description: 'Show auto-pause state, the latest resume prompt for this folder, and calibration. "release" opens the gate.', argumentHint: '[release]' }).catch(() => {})
     return next(e)
   })
 
   on('session.measure', async ($, e, next) => {
     if (e.context.tokens !== undefined) contextTokens = e.context.tokens
     await onReading($, e.rateLimits).catch(() => {})
+    await save($)
     return next(e)
   })
 
@@ -199,31 +329,48 @@ export const register: Register = (on, options) => {
       await onReading($, [])
     }
     const active = phase === 'pausing' || phase === 'gated'
+    const refuse = async (deny: string) => {
+      if (pause) pause.denials = (pause.denials ?? 0) + 1
+      await save($)
+      return { deny }
+    }
     if (e.agentId !== undefined) {
-      return active ? { deny: 'AUTO-PAUSE: the session is pausing for the usage limit. Stop and return to the parent now with what you have.' } : next(e)
+      // A subagent may still hand its work back; everything else stops at this boundary.
+      return active && !/^(SubagentHandback|TaskStop)$/.test(String(e.tool))
+        ? refuse('AUTO-PAUSE: the session is pausing for the usage limit. Stop and return to the parent now with: what you finished, what is in progress (file:line), and what is left.')
+        : next(e)
     }
     const handoff = isHandoffCall(e as never)
-    if (active && AGENT_TOOLS.has(e.tool)) return { deny: 'AUTO-PAUSE: no new subagents while pausing. Write the handoff instead.' }
+    if (active && AGENT_TOOLS.has(e.tool)) return refuse('AUTO-PAUSE: no new subagents while pausing. Write the handoff instead.')
     if (active && !handoff) {
       if (phase === 'pausing' && pause!.calls >= cfg.gateCalls) phase = 'gated'
-      if (phase === 'gated') return { deny: `AUTO-PAUSE gate: only the handoff is allowed now. Use the writing-handoffs skill and write ${pause!.path}.\n${pause!.notice}` }
+      if (phase === 'gated' && !isRescueCall(e as never)) {
+        return refuse(`AUTO-PAUSE gate: only the handoff is allowed now (plus Read, Grep, Glob and read-only git). Use the writing-handoffs skill and write ${pause!.path}.\n${pause!.notice}`)
+      }
       pause!.calls++
     }
     const r = await next(e)
     if (r.deny !== undefined) return r
     const context: string[] = []
     const file = (e as { file_path?: unknown }).file_path
-    if (FILE_TOOLS.has(e.tool) && !r.isError && isHandoffFile(file)) {
+    if (FILE_TOOLS.has(e.tool) && !r.isError && active && isHandoffFile(file) && file !== pause!.path) {
+      context.push(`AUTO-PAUSE: the resume prompt names ${pause!.path}. Write the handoff to exactly that path.`)
+    } else if (FILE_TOOLS.has(e.tool) && !r.isError && isHandoffFile(file)) {
       const text = await $.fs.read(String(file)).catch(() => undefined)
-      const problems = text === undefined ? [] : validate(text)
+      const problems = text === undefined ? [] : validate(text, pause?.head ? await git($, 'rev-parse', '--short', 'HEAD') : '')
       if (text !== undefined && !problems.length) {
         if (active) await finishPause($)
         context.push(`AUTO-PAUSE: handoff OK. End your turn now with the handoff path${pause ? `, when usage resets` : ''}, and the resume prompt verbatim in a \`\`\`text block.`)
+      } else if (problems.length && active && (pause!.fixes = (pause!.fixes ?? 0) + 1) >= MAX_FIXES) {
+        // Never lock a session on validation: after three tries the gate opens, logged as released.
+        await finishPause($, 'released')
+        context.push(`AUTO-PAUSE: the handoff still has problems (${problems.join(' ')}) The gate is open anyway. End your turn now with the handoff path and the resume prompt in a \`\`\`text block.`)
       } else if (problems.length) {
         context.push(`AUTO-PAUSE: the handoff needs fixes. Make them all in one Edit:\n${problems.map(p => `- ${p}`).join('\n')}`)
       }
     }
     if (pending) { context.unshift(pending); pending = undefined }
+    await save($)
     return context.length ? { ...r, context: [...(r.context ?? []), ...context] } : r
   }).catch(($, e, next) => next(e)) // fail open: a mod bug must never brick a session
 
@@ -236,16 +383,43 @@ export const register: Register = (on, options) => {
   ).catch(($, e, next) => next(e))
 
   // If Claude ends the turn before the handoff, send it back once.
-  on('classic.Stop', ($, e, next) => {
-    if ((phase !== 'pausing' && phase !== 'gated') || !pause || pause.stopBlocked || e.stop_hook_active) return next(e)
+  // A second end without a valid handoff gets the facts-only one, so the turn can always end.
+  on('classic.Stop', async ($, e, next) => {
+    if ((phase !== 'pausing' && phase !== 'gated') || !pause) return next(e)
+    if (pause.stopBlocked) {
+      await writeFallback($, 'Claude ended its turn twice without a valid handoff.').catch(() => {})
+      await save($)
+      return next(e)
+    }
     pause.stopBlocked = true
     pending = undefined
+    await save($)
     return { block: `${pause.notice}\nWrite the handoff now; this turn cannot end before it is written.` }
   }).catch(($, e, next) => next(e))
 
-  on('command.run', { command: 'auto-pause-status' }, async $ => {
+  // The limit hit before a handoff was checked: start one if none was, and write the facts.
+  on('classic.StopFailure', async ($, e, next) => {
+    // Only a plan limit we have seen coming: a 429 at low usage or with no data is not one.
+    const kind = owner ?? 'five_hour'
+    const w = windows.get(kind)
+    if (e.error === 'rate_limit' && phase !== 'paused' && hasData && w && 100 - w.used <= cfg.warn[kind]) {
+      owner = kind
+      if (!pause) await startPause($, kind, w.used, w.resetsAt).catch(() => {})
+      await writeFallback($, 'The usage limit was hit before the handoff was written.').catch(() => {})
+      await save($)
+    }
+    return next(e)
+  })
+
+  on('command.run', { command: 'auto-pause-status' }, async ($, e) => {
+    if (e.args.trim() === 'release') {
+      if (phase !== 'pausing' && phase !== 'gated') return { text: 'auto-pause: nothing to release.' }
+      await finishPause($, 'released')
+      await save($)
+      return { text: 'auto-pause: gate released by you (logged as an override). Claude can use every tool again this window.' }
+    }
     const cwd = await $.session.cwd()
-    const root = pause?.root ?? ((await $.process.run(['git', 'rev-parse', '--show-toplevel']).then(r => r.stdout.trim(), () => '')) || cwd)
+    const root = pause?.root ?? ((await git($, 'rev-parse', '--show-toplevel')) || cwd)
     const last = (phase === 'pausing' || phase === 'gated') && pause
     ? { ...pause, at: 'pausing now, not written yet' }
     : ((await $.store.get(`last:${root}`)) as { path: string; prompt: string; at: string } | undefined)
@@ -256,9 +430,12 @@ export const register: Register = (on, options) => {
     lines.push(`Thresholds: warn at ${cfg.warn.five_hour}% left, pause at ${cfg.pause.five_hour}% left (weekly ${cfg.warn.seven_day}/${cfg.pause.seven_day}).`)
     if (last) lines.push('', `Latest handoff for ${root} (${last.at}): ${last.path}`, 'Resume prompt:', '```text', last.prompt, '```')
     if (log.length) {
-      const costs = log.map(c => c.usedAtDone - c.usedAtNotice).sort((a, b) => a - b)
-      const p95 = costs[Math.min(costs.length - 1, Math.ceil(costs.length * 0.95) - 1)] ?? 0
-      lines.push('', `Calibration: ${log.length} pause(s); handoff cost p95 ${round(p95)} points. Suggested pause_at_percent_left: ${round(p95 + 2)}.`)
+      // Only checked handoffs measure what a handoff costs; the rest are counted as outcomes.
+      const costs = log.filter(c => (c.outcome ?? 'verified') === 'verified').map(c => c.usedAtDone - c.usedAtNotice).sort((a, b) => a - b)
+      const p95 = costs[Math.min(costs.length - 1, Math.ceil(costs.length * 0.95) - 1)]
+      const count = (o: Outcome) => log.filter(c => (c.outcome ?? 'verified') === o).length
+      lines.push('', `Calibration: ${log.length} pause(s): ${count('verified')} verified, ${count('fallback')} facts-only, ${count('released')} released, ${count('reset')} reset before a handoff.`)
+      if (p95 !== undefined) lines.push(`Handoff cost p95 ${round(p95)} points. Suggested pause_at_percent_left: ${round(p95 + 2)}.`)
     }
     return { text: lines.join('\n') }
   }).catch(() => ({ text: 'auto-pause: status failed; see claude --debug.' }))

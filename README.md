@@ -2,7 +2,19 @@
 
 A Claude Code plugin that watches your 5-hour and weekly usage. Shortly before you hit the limit, it gets Claude to stop at a safe point, write a handoff file, and give you a resume prompt to paste into a new session after the reset.
 
-Status: in development. The plugin installs but does nothing yet. [PLAN.md](PLAN.md) has the design and [docs/phase0-results.md](docs/phase0-results.md) has what was verified in the Claude Desktop app so far.
+Status: in development (pre-0.1.0). [PLAN.md](PLAN.md) has the design, `docs/phase*-results.md` has what was tested in each phase, and [docs/competitor-review.md](docs/competitor-review.md) compares it with similar plugins.
+
+## What it does
+
+1. At 15% left in the 5-hour window (10% weekly) it adds a warning to the next tool result.
+2. At 8% left (3% weekly) it tells Claude to finish or revert the current step and write a handoff to an exact path in `.handoffs/`. That path and a resume prompt with absolute paths are in the notice. Subagents are told to return, and new ones are refused.
+3. After 5 more tool calls, or 3 more usage points, every tool is refused except the handoff, reads, and read-only git.
+4. When Claude writes the handoff, the plugin checks it: the resume prompt is there verbatim, the required sections exist, the current commit is named, it fits the word budget, and nothing looks like a secret. A valid handoff opens the gate and Claude ends its turn with the resume prompt.
+5. If Claude ends the turn twice without a valid handoff, or the limit hits first, the plugin writes a facts-only handoff itself (last request, edited files, branch, commit, uncommitted files) and sends a desktop notification. This needs no model call.
+
+The pause is saved per session, so `/reload-plugins` or a plugin update mid-pause keeps it. After three failed checks the gate opens anyway, so a session never stays locked.
+
+`/auto-pause-status` shows the state, the latest resume prompt for this folder, and the calibration log (outcome and usage cost of each pause). `/auto-pause-status release` opens the gate by hand and logs it as an override.
 
 ## Why
 
@@ -35,7 +47,13 @@ Since you resume by hand, turn off the built-in auto-continue in `~/.claude/sett
 { "autoContinueAtUsageLimit": false }
 ```
 
-The trade-off: if the limit hits before the handoff is written, nothing finishes it for you. Go back to the old session after the reset and ask it to finish the handoff.
+The trade-off: if the limit hits before Claude writes the handoff, you get only the facts-only handoff. Go back to the old session after the reset and ask it to finish the handoff, or start from the facts-only one.
+
+## Limitations
+
+- The plugin acts at tool calls and turn ends. It cannot interrupt a model response or a tool that is already running.
+- Usage figures arrive with each API response, so an idle session sees a threshold only on its next response.
+- On Claude Code installs managed by an organization, the Stop and StopFailure hooks run only if the organization lists the plugin, so the end-of-turn block and the facts-only handoff are off there.
 
 ## Uninstall
 

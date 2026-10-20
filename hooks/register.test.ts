@@ -5,15 +5,24 @@ const ROOT = '/Users/me/My Projects/app'
 const RESETS = '2026-10-19T22:00:00.000Z'
 const NEXT_RESETS = '2026-10-20T03:00:00.000Z'
 
-type World = { files: Map<string, string>; calls: string[] }
+type World = { files: Map<string, string>; calls: string[]; notes: string[]; store: Map<string, unknown>; head: { value: string }; ask: { value: string }; id: { value: string } }
 
 // The engine beneath the plugin: git in a repo with one change, files in memory,
 // every tool answering ok (Write/Edit store their text so validation can read it).
-function world(on: On, env: Record<string, string> = {}, git = true): World {
+function world(on: On, env: Record<string, string> = {}, git = true, store: Record<string, unknown> = {}): World {
   const files = new Map<string, string>([[`${ROOT}/.git/info/exclude`, '# git ls-files --others --exclude-from=.git/info/exclude\n']])
   const calls: string[] = []
+  const notes: string[] = []
+  const head = { value: 'abc1234' }
+  const ask = { value: 'Fix the date parser' }
+  const id = { value: 'unknown' }
   mock.clock(on, { now: Date.parse('2026-10-19T15:02:00Z') })
-  mock.store(on)
+  // A store the test can read back, so saved state can be checked.
+  const kv = new Map<string, unknown>(Object.entries(store))
+  on('store.get', ($, e) => ({ value: structuredClone(kv.get(e.key)) }))
+  on('store.set', ($, e) => (kv.set(e.key, structuredClone(e.value)), { value: undefined }))
+  on('store.delete', ($, e) => (kv.delete(e.key), { value: undefined }))
+  on('store.keys', () => ({ value: [...kv.keys()] }))
   mock.env(on, env)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.measure', ($, e) => ({ changed: e.changed }))
@@ -26,6 +35,7 @@ function world(on: On, env: Record<string, string> = {}, git = true): World {
     if (!git) return { value: { ...out('').value, exitCode: 128 } }
     if (a === 'rev-parse --show-toplevel') return out(`${ROOT}\n`)
     if (a === 'branch --show-current') return out('main\n')
+    if (a === 'rev-parse --short HEAD') return out(`${head.value}\n`)
     if (a === 'status --porcelain') return out(' M src/a.ts\n M src/c.ts\n?? src/b.ts\n')
     if (a === 'rev-parse --path-format=absolute --git-path info/exclude') return out(`${ROOT}/.git/info/exclude\n`)
     return out('')
@@ -46,7 +56,14 @@ function world(on: On, env: Record<string, string> = {}, git = true): World {
   })
   on('tool.check', () => ({ decision: 'ask' as const }))
   on('classic.Stop', () => ({}))
-  return { files, calls }
+  on('classic.StopFailure', () => ({}))
+  on('session.messages', () => ({ value: [
+    { role: 'user', text: ask.value, toolUses: [] },
+    { role: 'assistant', text: '', toolUses: [{ tool_use_id: 't1', tool: 'Edit', input: { file_path: `${ROOT}/src/a.ts` } }] },
+  ] }) as never)
+  on('ui.notify', ($, e) => (notes.push(e.text), { value: { isSent: true, channel: 'test' } }) as never)
+  on('session.id', () => ({ value: id.value }))
+  return { files, calls, notes, store: kv, head, ask, id }
 }
 
 const reading = (used: number, kind = 'five_hour', resetsAt = RESETS) => ({
@@ -75,7 +92,7 @@ Ship it · Done when: tests pass
 1. Edit src/b.ts line 3.
 
 ## Repo state
-main · uncommitted: src/a.ts
+main · abc1234 · uncommitted: src/a.ts
 ${extra}`
 
 const bash = { tool: 'Bash', command: 'ls' } as const
@@ -124,7 +141,7 @@ describe('thresholds', () => {
     expect(notice).toContain('at most 5 more tool calls')
     expect(path.startsWith(`${ROOT}/.handoffs/`)).toBe(true)
     expect(path.endsWith('-auto-pause.md')).toBe(true)
-    expect(notice).toContain('Repo state: branch main · uncommitted: M src/a.ts, M src/c.ts, ?? src/b.ts')
+    expect(notice).toContain('Repo state: branch main · HEAD abc1234 (copy it into "## Repo state") · uncommitted: M src/a.ts, M src/c.ts, ?? src/b.ts')
     expect(prompt).toContain(`Resume paused work in ${ROOT}.`)
     expect(prompt).toContain(`Read ${path} first.`)
     expect(prompt).toContain('Check that `git status` matches')
@@ -249,8 +266,10 @@ describe('gate', () => {
     world(on); await start($)
     const write = { tool: 'Write', input: { file_path: `${ROOT}/.handoffs/x.md`, content: '' } }
     expect((await $.tool.check(write as never)).decision).toBe('ask')
-    await pauseNotice($)
-    expect((await $.tool.check(write as never)).decision).toBe('allow')
+    const { path } = await pauseNotice($)
+    // Only the exact file the resume prompt names is auto-allowed.
+    expect((await $.tool.check(write as never)).decision).toBe('ask')
+    expect((await $.tool.check({ tool: 'Write', input: { file_path: path, content: '' } } as never)).decision).toBe('allow')
     expect((await $.tool.check({ tool: 'Skill', input: { skill: 'auto-pause:writing-handoffs' } } as never)).decision).toBe('allow')
     expect((await $.tool.check({ tool: 'Bash', input: { command: 'rm -rf /' } } as never)).decision).toBe('ask')
   })
@@ -285,13 +304,14 @@ describe('handoff validation', () => {
     const status = (await $.command.run({ command: 'auto-pause-status', args: '' })).text!
     expect(status).toContain('auto-pause: paused')
     expect(status).toContain(prompt)
-    expect(status).toContain('Calibration: 1 pause(s); handoff cost p95 2 points. Suggested pause_at_percent_left: 4.')
+    expect(status).toContain('Calibration: 1 pause(s): 1 verified, 0 facts-only, 0 released, 0 reset before a handoff.')
+    expect(status).toContain('Handoff cost p95 2 points. Suggested pause_at_percent_left: 4.')
   })
 
   test('an invalid handoff gets a fix list and keeps the gate', async ($, on) => {
     world(on); await start($)
     const { path, prompt } = await pauseNotice($)
-    const big = '```ts\n' + 'x\n'.repeat(20) + '```\nsk-ant-abc123'
+    const big = '```ts\n' + 'x\n'.repeat(20) + '```\nsk-ant-api03-' + 'a1B2'.repeat(6)
     const bad = handoff(prompt, big).replace('## Goal', '## Aim').replace('1. Edit src/b.ts line 3.', '')
     const r = await $.tool.call({ tool: 'Write', file_path: path, content: bad } as never)
     const c = ctx(r)
@@ -366,5 +386,201 @@ describe('windows', () => {
     await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never)
     await $.session.measure(reading(99))
     expect(ctx(await $.tool.call(bash))).toBe('')
+  })
+})
+
+describe('refinements from the competitor review', () => {
+  test('the pause survives a plugin reload: state is restored from the store', async ($, on) => {
+    const path = `${ROOT}/.handoffs/2026-10-19T1002-auto-pause.md`
+    const saved = {
+      phase: 'gated', owner: 'five_hour', hasData: true,
+      pause: { kind: 'five_hour', usedAtNotice: 94, calls: 5, root: ROOT, path, prompt: 'P', notice: 'N', stopBlocked: false, head: 'abc1234' },
+      windows: [['five_hour', { key: `five_hour@${RESETS}`, used: 95, resetsAt: RESETS, fired: ['warn', 'pause'] }]],
+    }
+    world(on, {}, true, { 'session:unknown': saved }); await start($)
+    expect((await $.tool.call(bash)).deny).toContain('AUTO-PAUSE gate')
+    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('auto-pause: gated')
+  })
+
+  test('state is saved after each change', async ($, on) => {
+    const w = world(on); await start($)
+    await pauseNotice($)
+    const saved = w.store.get('session:unknown') as { phase: string; pause: { path: string } }
+    expect(saved.phase).toBe('pausing')
+    expect(saved.pause.path).toContain('/.handoffs/')
+  })
+
+  test('the gate lets reads and read-only git through, nothing else', async ($, on) => {
+    world(on); await start($)
+    await pauseNotice($)
+    await $.session.measure(reading(98))
+    expect((await $.tool.call({ tool: 'Read', file_path: `${ROOT}/src/a.ts` } as never)).deny).toBeUndefined()
+    expect((await $.tool.call({ tool: 'Bash', command: 'git status --porcelain' } as never)).deny).toBeUndefined()
+    expect((await $.tool.call({ tool: 'Bash', command: 'git log --oneline -5' } as never)).deny).toBeUndefined()
+    expect((await $.tool.call({ tool: 'Bash', command: 'git push' } as never)).deny).toContain('AUTO-PAUSE gate')
+    expect((await $.tool.call({ tool: 'Bash', command: 'git status; rm -rf src' } as never)).deny).toContain('AUTO-PAUSE gate')
+    expect((await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/src/a.ts`, old_string: 'a', new_string: 'b' } as never)).deny).toContain('AUTO-PAUSE gate')
+  })
+
+  test('while pausing a handoff at another path is refused by the gate and flagged in grace', async ($, on) => {
+    world(on); await start($)
+    const { prompt } = await pauseNotice($)
+    const other = `${ROOT}/.handoffs/my-own-name.md`
+    const r = await $.tool.call({ tool: 'Write', file_path: other, content: handoff(prompt) } as never)
+    expect(ctx(r)).toContain('Write the handoff to exactly that path')
+    expect(ctx(r)).not.toContain('handoff OK')
+    await $.session.measure(reading(98))
+    expect((await $.tool.call({ tool: 'Write', file_path: other, content: '' } as never)).deny).toContain('AUTO-PAUSE gate')
+  })
+
+  test('the handoff must name the current HEAD in Repo state', async ($, on) => {
+    world(on); await start($)
+    const { notice, path, prompt } = await pauseNotice($)
+    expect(notice).toContain('HEAD abc1234')
+    const r = await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt).replace('abc1234 · ', '') } as never)
+    expect(ctx(r)).toContain('must name HEAD abc1234')
+  })
+
+  test('three failed checks open the gate instead of locking the session', async ($, on) => {
+    world(on); await start($)
+    const { path } = await pauseNotice($)
+    await $.session.measure(reading(98))
+    for (let i = 0; i < 2; i++) expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: '# nothing' } as never))).toContain('needs fixes')
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: '# nothing' } as never))).toContain('The gate is open anyway')
+    expect((await $.tool.call(bash)).deny).toBeUndefined()
+    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('1 released')
+  })
+
+  test('a second Stop without a handoff writes the facts-only one and notifies', async ($, on) => {
+    const w = world(on); await start($)
+    const { path } = await pauseNotice($)
+    expect((await $.classic.Stop({ stop_hook_active: false })).block).toContain('AUTO-PAUSE')
+    expect((await $.classic.Stop({ stop_hook_active: true })).block).toBeUndefined()
+    const text = w.files.get(path)!
+    expect(text).toContain('# Handoff: facts only')
+    expect(text).toContain('Fix the date parser')
+    expect(text).toContain(`${ROOT}/src/a.ts`)
+    expect(text).toContain('HEAD abc1234')
+    expect(text).toContain(`Read ${path} first.`)
+    expect(w.notes[0]).toContain(path)
+    expect((await $.tool.call(bash)).deny).toBeUndefined()
+    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('1 facts-only')
+  })
+
+  test('a partial handoff from Claude is kept and the facts go beside it', async ($, on) => {
+    const w = world(on); await start($)
+    const { path, prompt } = await pauseNotice($)
+    await $.tool.call({ tool: 'Write', file_path: path, content: '# Handoff: half' } as never)
+    await $.classic.Stop({ stop_hook_active: false })
+    await $.classic.Stop({ stop_hook_active: true })
+    const facts = path.replace(/\.md$/, '-facts.md')
+    expect(w.files.get(path)).toBe('# Handoff: half')
+    expect(w.files.get(facts)).toContain(`Read ${facts} first.`)
+    const status = (await $.command.run({ command: 'auto-pause-status', args: '' })).text!
+    expect(status).toContain(facts)
+    expect(status).not.toContain(prompt)
+  })
+
+  test('hitting the limit before any pause writes a facts-only handoff', async ($, on) => {
+    const w = world(on); await start($)
+    await $.session.measure(reading(86))
+    await $.classic.StopFailure({ error: 'rate_limit' } as never)
+    const written = [...w.files.keys()].find(k => k.includes('/.handoffs/'))!
+    expect(w.files.get(written)).toContain('The usage limit was hit before the handoff was written.')
+    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('auto-pause: paused')
+  })
+
+  test('other StopFailure errors do nothing', async ($, on) => {
+    const w = world(on); await start($)
+    await pauseNotice($)
+    await $.classic.StopFailure({ error: 'overloaded' } as never)
+    expect([...w.files.keys()].some(k => k.includes('/.handoffs/'))).toBe(false)
+  })
+
+  test('a reading whose reset time has passed is ignored', async ($, on) => {
+    world(on); await start($)
+    const r = await $.session.measure(reading(97, 'five_hour', '2026-10-19T12:00:00.000Z'))
+    expect(r).toBeDefined()
+    expect(ctx(await $.tool.call(bash))).toBe('')
+  })
+
+  test('release opens the gate and is logged as an override', async ($, on) => {
+    world(on); await start($)
+    await pauseNotice($)
+    await $.session.measure(reading(98))
+    expect((await $.tool.call(bash)).deny).toContain('AUTO-PAUSE gate')
+    expect((await $.command.run({ command: 'auto-pause-status', args: 'release' })).text).toContain('gate released by you')
+    expect((await $.tool.call(bash)).deny).toBeUndefined()
+    expect((await $.command.run({ command: 'auto-pause-status', args: 'release' })).text).toBe('auto-pause: nothing to release.')
+    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('1 released')
+  })
+
+  test('a reset during a pause is logged as an outcome', async ($, on) => {
+    world(on); await start($)
+    await pauseNotice($)
+    await $.session.measure(reading(10, 'five_hour', NEXT_RESETS))
+    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('1 reset before a handoff')
+  })
+})
+
+describe('review fixes', () => {
+  test('a 429 at low usage or with no data does not pause or write anything', async ($, on) => {
+    const w = world(on); await start($)
+    await $.classic.StopFailure({ error: 'rate_limit' } as never)
+    await $.session.measure(reading(40))
+    await $.classic.StopFailure({ error: 'rate_limit' } as never)
+    expect([...w.files.keys()].some(k => k.includes('/.handoffs/'))).toBe(false)
+    await $.session.measure(reading(94))
+    expect(ctx(await $.tool.call(bash))).toContain('pause threshold reached')
+  })
+
+  test('mutating git subcommands and file-writing flags stay gated', async ($, on) => {
+    world(on); await start($)
+    await pauseNotice($)
+    await $.session.measure(reading(98))
+    for (const command of ['git branch -D main', 'git branch newname', 'git branch -m x', 'git diff --output=/tmp/x', 'git log --output=x', 'git show --ext-diff HEAD'])
+      expect((await $.tool.call({ tool: 'Bash', command } as never)).deny).toContain('AUTO-PAUSE gate')
+    for (const command of ['git branch', 'git branch --show-current', 'git branch -a', 'git diff HEAD~1 -- src/a.ts', 'git rev-parse --short HEAD'])
+      expect((await $.tool.call({ tool: 'Bash', command } as never)).deny).toBeUndefined()
+  })
+
+  test('a commit during the grace calls: the new HEAD is accepted', async ($, on) => {
+    const w = world(on); await start($)
+    const { path, prompt } = await pauseNotice($)
+    w.head.value = 'def5678'
+    const r = await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt).replace('abc1234', 'def5678') } as never)
+    expect(ctx(r)).toContain('handoff OK')
+  })
+
+  test('the facts-only handoff redacts secrets from the last request', async ($, on) => {
+    const w = world(on); await start($)
+    w.ask.value = 'use ANTHROPIC_API_KEY=sk-ant-api03-' + 'a1B2'.repeat(6) + ' and fix it'
+    const { path } = await pauseNotice($)
+    await $.classic.Stop({ stop_hook_active: false })
+    await $.classic.Stop({ stop_hook_active: true })
+    expect(w.files.get(path)).toContain('[redacted]')
+    expect(w.files.get(path)).not.toContain('sk-ant-api03')
+  })
+
+  test('the first Stop blocks even when another hook already blocked once', async ($, on) => {
+    world(on); await start($)
+    await pauseNotice($)
+    expect((await $.classic.Stop({ stop_hook_active: true })).block).toContain('AUTO-PAUSE')
+  })
+
+  test('releasing before any handoff exists leaves no resume prompt pointing nowhere', async ($, on) => {
+    world(on); await start($)
+    await pauseNotice($)
+    await $.command.run({ command: 'auto-pause-status', args: 'release' })
+    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).not.toContain('Resume prompt:')
+  })
+
+  test('a new session id starts from a clean state', async ($, on) => {
+    const w = world(on); await start($)
+    await pauseNotice($)
+    w.id.value = 'second-session'
+    await start($)
+    expect((await $.tool.call(bash)).deny).toBeUndefined()
+    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('auto-pause: normal')
   })
 })
