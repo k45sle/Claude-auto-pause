@@ -1,16 +1,34 @@
 # auto-pause
 
+> [!IMPORTANT]
+> **This plugin was written entirely by AI.** All of its code, tests and documentation were written by Claude (Anthropic's AI) in Claude Code. I am not a programmer. What I did:
+>
+> - Came up with the idea on my own, before I knew any similar plugins existed.
+> - Gathered the outside research on similar plugins that shaped the design.
+> - Decided what the plugin should do, reviewed the work, and edited this README.
+
 Claude has two usage limits: one resets every 5 hours, the other every week. When you get close to one, this plugin makes Claude stop at a good moment and save a note (Claude calls it a "handoff") about where it left off, and give you a resume prompt to copy. After the limit resets, you paste the resume prompt into a new chat session and Claude carries on.
 
 ## How it's different
 
-Many plugins warn you about usage, and some write a handoff note. What auto-pause adds:
+Many plugins warn you about usage, and some write a handoff note. auto-pause is the only one we found that locks Claude's tools until a checked note exists.
 
-- Claude's tools lock until it has written a note and the plugin has checked it. Other plugins that block tools don't ask for a note first, or only block risky edits.
-- The check is strict. The note must point to the current version of your project, list every file you changed, and contain no passwords or keys.
-- It reads your real plan usage, both the 5-hour and the weekly limit, from Claude's official feed, which also works in the Desktop app. Some others count how long the chat is instead.
-- It adds your last few messages word for word, so the new chat works from what you actually asked.
-- If Claude runs out before finishing, the plugin writes a basic note by itself, using no extra usage.
+| Plugin | Reads your real plan usage | Locks Claude's tools | Writes a note | Checks the note before unlocking | Desktop app |
+|---|---|---|---|---|---|
+| **auto-pause** | Yes, 5-hour and weekly | Yes | Yes | Yes | Yes |
+| [redline](https://github.com/sankalpgunturi/redline) | Yes | Yes | Summary only | No | Not shown |
+| [handoff-now](https://github.com/talal-ai/handoff-now) | 5-hour only | Risky edits only | Yes | No | Yes |
+| [claude-auto-handoff](https://github.com/alexknowshtml/claude-auto-handoff) | No, chat length | Yes | Yes | No | Not shown |
+| [agent-usage-guard](https://github.com/rbartoli/agent-usage-guard) | Yes | Helpers and big requests only | No | No | Yes |
+| [Agent Layer's Usage Guard](https://github.com/agent-layer-mcp/usage-guard) | Yes (unofficial source in Desktop) | Yes | Usage handover and a chat summary | No | Yes |
+| [claude-usage-guard](https://github.com/gokhanarkan/claude-usage-guard) | Yes | Optional (default waits for the reset) | No | No | Not shown |
+| [MohammadMD1383's usage-guard](https://github.com/MohammadMD1383/claude-plugins) | Yes | New helpers only | Yes | No | Not shown |
+| [claude-limit-guard](https://github.com/funhunter7/claude-limit-guard) | Yes | No | Yes | No | Not shown |
+| [agent-limit-retry](https://github.com/error0702/agent-limit-retry) | Yes | No, one reminder | Yes | No | Not shown |
+
+"Not shown" means we found no sign of it, not that it's missing. Based on each project's own description and the code we read in October 2026; they may have changed since.
+
+auto-pause's check is strict: the note must point to the current version of your project, list every file you changed, and contain no passwords or keys. It also copies your last few messages into the note word for word, and if Claude runs out first, the plugin writes a basic note by itself.
 
 The full comparison is in [docs/competitor-review.md](docs/competitor-review.md).
 
