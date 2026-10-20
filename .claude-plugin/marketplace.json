@@ -1,0 +1,12 @@
+{
+  "name": "k45sle",
+  "owner": { "name": "Kassle", "url": "https://github.com/k45sle" },
+  "metadata": { "description": "Claude Code plugins by Kassle." },
+  "plugins": [
+    {
+      "name": "auto-pause",
+      "source": "./",
+      "description": "Pauses Claude Code at a safe point before the usage limit and writes a handoff with a ready-to-paste resume prompt."
+    }
+  ]
+}

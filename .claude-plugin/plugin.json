@@ -1,0 +1,10 @@
+{
+  "name": "auto-pause",
+  "version": "0.0.1",
+  "description": "Pauses Claude Code at a safe point before the usage limit and writes a handoff with a ready-to-paste resume prompt.",
+  "author": { "name": "Kassle", "url": "https://github.com/k45sle" },
+  "homepage": "https://github.com/k45sle/Claude-auto-pause",
+  "repository": "https://github.com/k45sle/Claude-auto-pause",
+  "license": "MIT",
+  "keywords": ["usage-limit", "handoff", "rate-limit", "mods"]
+}
