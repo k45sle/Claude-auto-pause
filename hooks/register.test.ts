@@ -370,6 +370,17 @@ describe('handoff validation', () => {
     expect(ctx(r)).toContain('handoff OK')
   })
 
+  test('the manual facts call gets usage, reset time and the word budget; other Bash calls do not', { options: { handoff_word_budget: 400 } }, async ($, on) => {
+    world(on); await start($)
+    const facts = { tool: 'Bash', command: 'bash "/x/skills/writing-handoffs/scripts/facts.sh" parser .handoffs' } as never
+    expect(ctx(await $.tool.call(facts))).toBe('auto-pause: usage unknown (no current reading). Word budget: 400.')
+    await $.session.measure(reading(40))
+    const r = ctx(await $.tool.call(facts))
+    expect(r).toContain('5-hour usage 40% used (60% left), resets ')
+    expect(r).toContain('Word budget: 400.')
+    expect(ctx(await $.tool.call(bash))).toBe('')
+  })
+
   test('a manual handoff whose prompt names another file or skips the HEAD check is sent back with the right prompt', async ($, on) => {
     world(on); await start($)
     const path = `${ROOT}/.handoffs/2026-10-20T1130-status.md`

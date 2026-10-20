@@ -237,7 +237,7 @@ async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {
   const prompt = resumePrompt(root, path, !!top)
   const notice = [
     `AUTO-PAUSE: pause threshold reached. ${usage(kind, used, resetsAt)} (This comes from the auto-pause plugin the user installed to save work before the usage limit.)`,
-    `Do not start new work. Finish or revert the step in progress (at most ${cfg.gateCalls} more tool calls), then use the writing-handoffs skill and write exactly the handoff path below.`,
+    `Do not start new work. Finish or revert the step in progress (at most ${cfg.gateCalls} more tool calls), then use the writing-handoffs skill and write exactly the handoff path below, in under ${cfg.words} words.`,
     `Handoff path: ${path}`,
     `Repo state: ${repo}`,
     'Resume prompt (put it verbatim at the top of the handoff, and end your turn with it in a code block):',
@@ -428,13 +428,20 @@ export const register: Register = (on, options) => {
     if (active && !handoff) {
       if (phase === 'pausing' && pause!.calls >= cfg.gateCalls) phase = 'gated'
       if (phase === 'gated' && (!isRescueCall(e as never) || (pause!.rescues = (pause!.rescues ?? 0) + 1) > MAX_RESCUES)) {
-        return refuse(`AUTO-PAUSE gate (from the auto-pause plugin the user installed): only the handoff is allowed now, plus a few reads (Read, Grep, Glob, read-only git without pipes or quotes; use Read, not cat). Use the writing-handoffs skill and write ${pause!.path}.\n${pause!.notice}`)
+        // The notice already names the plugin, the skill and the path.
+        return refuse(`AUTO-PAUSE gate: only the handoff is allowed now, plus a few reads (Read, Grep, Glob, read-only git without pipes or quotes; use Read, not cat).\n${pause!.notice}`)
       }
       pause!.calls++
     }
     const r = await next(e)
     if (r.deny !== undefined) return r
     const context: string[] = []
+    // facts.sh can read only git and the clock, so a manual handoff gets usage and the budget from here.
+    if (e.tool === 'Bash' && String((e as { command?: unknown }).command ?? '').includes('writing-handoffs/scripts/facts.sh')) {
+      const now = await $.clock.now()
+      const live = [...windows].filter(([, w]) => !w.resetsAt || Date.parse(w.resetsAt) > now).map(([k, w]) => usage(k, w.used, w.resetsAt))
+      context.push(`auto-pause: ${live.join(' ') || 'usage unknown (no current reading).'} Word budget: ${cfg.words}.`)
+    }
     const file = (e as { file_path?: unknown }).file_path
     if (FILE_TOOLS.has(e.tool) && !r.isError && active && isHandoffFile(file) && file !== pause!.path) {
       context.push(`AUTO-PAUSE: the resume prompt names ${pause!.path}. Write the handoff to exactly that path.`)

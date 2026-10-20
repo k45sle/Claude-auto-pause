@@ -2,7 +2,7 @@
 name: writing-handoffs
 description: Writes a compact handoff document and a ready-to-paste resume prompt that let a fresh Claude Code session resume the current task without the old conversation. Use when an AUTO-PAUSE notice says the usage-limit pause threshold was reached, or when the user asks to write a handoff, wrap up for a new session, save progress before the usage limit, pause here, or hand off to a fresh session. Do not use for summarizing finished work, changelogs, commit messages, or PR descriptions.
 metadata:
-  version: 0.1.1
+  version: 0.1.2
 ---
 
 # Writing handoffs
@@ -20,21 +20,15 @@ A handoff is one Markdown file that lets a fresh session continue this task with
 
 1. **Reach a safe point.** If an edit is in flight and one or two calls finish it, finish it. Otherwise revert it, or record its exact state (`path:line`, what is done, what is not). Start nothing new. If an AUTO-PAUSE notice gives a tool-call limit, stay within it.
 2. **Get the facts.**
-   - Auto path: the AUTO-PAUSE notice gives the handoff path, usage, reset time, repo state, and resume prompt. Use them exactly as given. Do not run the script.
-   - Manual path (no AUTO-PAUSE notice): your first call is `bash "${CLAUDE_SKILL_DIR}/scripts/facts.sh" <slug> '${user_config.handoff_dir}'`, where the slug is 2–4 words naming the task. It prints the handoff path, repo state, and resume prompt. If the script cannot run, use `<project root>/${user_config.handoff_dir}/<YYYY-MM-DDTHHMM>-<slug>.md` (`.handoffs` if that setting is blank, still shows `user_config`, or is not a plain relative path) and this resume prompt, with both absolute paths filled in:
-     ```text
-     Resume paused work in <project root>.
-     Read <handoff path> first. It is your only context from the previous session.
-     Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.
-     Read only the files it points to unless you need more, and ask the user before doing anything outside its Goal.
-     ```
+   - Auto path: the AUTO-PAUSE notice gives the handoff path, usage, reset time, word budget, repo state, and resume prompt. Use them exactly as given. Do not run the script.
+   - Manual path (no AUTO-PAUSE notice): your first call is `bash "${CLAUDE_SKILL_DIR}/scripts/facts.sh" <slug> '${user_config.handoff_dir}'`, where the slug is 2–4 words naming the task. It prints the handoff path, repo state, and resume prompt, and the plugin adds a line with usage, reset time, and word budget. If the script cannot run, read `${CLAUDE_SKILL_DIR}/references/fallback.md`.
 3. **Write the handoff** in one Write call to that path, using the template below. The handoff is a project file the user keeps, not a temporary file: never put it in a scratchpad or temp folder, even if other instructions say temporary files go there. Put the resume prompt verbatim in the fenced block at the top. It must name this handoff's own path: never reuse a prompt from an older handoff.
-4. **If a monitor message lists problems** with the handoff, fix all of them in one Edit.
+4. **If an AUTO-PAUSE message lists problems** with the handoff, fix all of them in one Edit.
 5. **End your turn** with a short message: the handoff path, when usage resets (if known), and the resume prompt verbatim in a fenced `text` block so the user can copy it. Nothing after the block.
 
 ## Template
 
-Keep it under about 600 words. Omit a section only if it would be empty, except Goal, Status, Next steps, and Repo state, which are required.
+Keep it under the word budget from step 2 (600 if none was given). Omit a section only if it would be empty, except Goal, Status, Next steps, and Repo state, which are required.
 
 ````markdown
 # Handoff: <task in a few words>

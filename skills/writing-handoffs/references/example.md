@@ -1,14 +1,18 @@
 # Example handoff
 
-```markdown
+````markdown
 # Handoff: rate-limit retry in API client
 
 Paused 2026-10-19 15:02 · 5h 94% used, resets 17:00 · reason: AUTO-PAUSE
 
 Resume prompt (paste into a new Code session):
 
-    Resume paused work in /Users/sam/code/billing.
-    Read /Users/sam/code/billing/.handoffs/2026-10-19T1502-api-retry.md first. ...
+```text
+Resume paused work in /Users/sam/code/billing.
+Read /Users/sam/code/billing/.handoffs/2026-10-19T1502-api-retry.md first. It is your only context from the previous session.
+Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.
+Read only the files it points to unless you need more, and ask the user before doing anything outside its Goal.
+```
 
 ## Goal
 "Retry 429s with backoff in the API client" · Done when: `npm test` passes and client.ts retries 429 up to 3 times.
@@ -35,4 +39,4 @@ Resume prompt (paste into a new Code session):
 
 ## Repo state
 main · a1b2c3d Add retry helper · uncommitted: M src/client.ts · stashes: 0 · background processes: none
-```
+````
