@@ -4,14 +4,13 @@ Claude has two usage limits: one resets every 5 hours, the other every week. Whe
 
 ## How it's different
 
-Other plugins do parts of this. auto-pause is the only one we found that does all of it:
+Many plugins warn you about usage, and some write a handoff note. What auto-pause adds:
 
-- It watches your actual plan usage, both the 5-hour and the weekly limit. Some others only see the 5-hour limit, or count how long the chat is instead.
-- It works in the Code tab of the Desktop app, not only in the Terminal.
-- After a few extra steps to finish up, Claude's tools lock until the note is written.
-- The plugin checks the note before accepting it. It must point to the right version of your project, list every file you changed, and contain no passwords or keys.
+- Claude's tools lock until it has written a note and the plugin has checked it. Other plugins that block tools don't ask for a note first, or only block risky edits.
+- The check is strict. The note must point to the current version of your project, list every file you changed, and contain no passwords or keys.
+- It reads your real plan usage, both the 5-hour and the weekly limit, from Claude's official feed, which also works in the Desktop app. Some others count how long the chat is instead.
 - It adds your last few messages word for word, so the new chat works from what you actually asked.
-- If Claude runs out before finishing, the plugin writes a basic note by itself.
+- If Claude runs out before finishing, the plugin writes a basic note by itself, using no extra usage.
 
 The full comparison is in [docs/competitor-review.md](docs/competitor-review.md).
 
@@ -113,7 +112,7 @@ How it works, every setting, and the security details: [docs/details.md](docs/de
 
 The patterns that spot passwords and keys in a note are adapted from [handoff-now](https://github.com/talal-ai/handoff-now) (Apache 2.0). That is the only code taken from another project.
 
-Some ideas came from other plugins, written here as our own code: [handoff-now](https://github.com/talal-ai/handoff-now), [agent-usage-guard](https://github.com/rbartoli/agent-usage-guard), [claude-auto-handoff](https://github.com/alexknowshtml/claude-auto-handoff), [handoff-guard](https://github.com/angkaworn-dotcom/handoff-guard), [MohammadMD1383](https://github.com/MohammadMD1383)'s usage guard, agent-layer's usage-guard and claude-limit-guard. [NOTICE](NOTICE) says which idea came from where.
+Some ideas came from other plugins, written here as our own code: [handoff-now](https://github.com/talal-ai/handoff-now), [agent-usage-guard](https://github.com/rbartoli/agent-usage-guard), [claude-auto-handoff](https://github.com/alexknowshtml/claude-auto-handoff), [handoff-guard](https://github.com/angkaworn-dotcom/handoff-guard), [MohammadMD1383's usage-guard](https://github.com/MohammadMD1383/claude-plugins), [Agent Layer's Usage Guard](https://github.com/agent-layer-mcp/usage-guard) and [claude-limit-guard](https://github.com/funhunter7/claude-limit-guard). [NOTICE](NOTICE) says which idea came from where.
 
 ## License
 

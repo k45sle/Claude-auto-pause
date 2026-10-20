@@ -22,7 +22,7 @@ Ideas taken from other plugins (no code copied; the code here is written separat
   and asking whether the last request was finished.
 - handoff-guard (https://github.com/angkaworn-dotcom/handoff-guard, MIT): having the resumed
   session confirm the repo state with the user before it starts.
-- MohammadMD1383's usage guard (https://github.com/MohammadMD1383): writing a snapshot
+- usage-guard by MohammadMD1383 (https://github.com/MohammadMD1383/claude-plugins, MIT): writing a snapshot
   handoff when the turn fails at the limit.
-- agent-layer usage-guard: falling back to /usr/bin/git when hooks run without PATH.
-- claude-limit-guard: ignoring usage readings whose reset time has passed.
+- Usage Guard by Agent Layer (https://github.com/agent-layer-mcp/usage-guard, MIT): falling back to /usr/bin/git when hooks run without PATH.
+- claude-limit-guard (https://github.com/funhunter7/claude-limit-guard, MIT): ignoring usage readings whose reset time has passed.
