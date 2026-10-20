@@ -2,6 +2,7 @@
 # Prints the facts a handoff needs: handoff path, repo state, resume prompt.
 # Usage: facts.sh [task-slug] [handoff-dir]. Creates the handoff folder and keeps it out of git. Always exits 0.
 set -u
+# Slug: lowercase words joined by '-', at most 40 characters so the file name stays readable.
 slug=$(printf '%s' "${1:-task}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-*//; s/-*$//' | cut -c1-40)
 [ -n "$slug" ] || slug=task
 # The plugin's handoff_dir option, substituted into SKILL.md. Same rule as the mod: relative, plain
