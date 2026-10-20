@@ -1,6 +1,6 @@
 # auto-pause
 
-Claude has two usage limits: one resets every 5 hours, the other every week. When you get close to one, this plugin makes Claude stop at a good moment and save a note (Claude calls it a "handoff") about where it left off and a resume prompt for you to copy. After the limit resets, you paste the resume prompt into a new chat session and Claude carries on.
+Claude has two usage limits: one resets every 5 hours, the other every week. When you get close to one, this plugin makes Claude stop at a good moment and save a note (Claude calls it a "handoff") about where it left off, and give you a resume prompt to copy. After the limit resets, you paste the resume prompt into a new chat session and Claude carries on.
 
 Version 0.1.5. Still being tested.
 
