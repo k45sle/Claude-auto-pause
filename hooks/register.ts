@@ -15,7 +15,7 @@ const LABEL: Record<Kind, string> = { five_hour: '5-hour', seven_day: '7-day' }
 const REQUIRED = ['Goal', 'Status', 'Next steps', 'Repo state']
 // Merged from handoff-now's redaction list plus common provider prefixes.
 const SECRETS = [
-  /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/,
+  /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/, // through the body, so redaction takes it all
   /sk-ant-[A-Za-z0-9_-]{20,}/,
   /\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}/,
   /\bgh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}/,
@@ -33,6 +33,20 @@ const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'TodoWrite'])
 const MAX_FIXES = 3
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit'])
 const AGENT_TOOLS = new Set(['Agent', 'Task'])
+// The mod appends this section after a handoff passes; validation ignores it.
+const FACTS = '## Session facts (added by auto-pause, read from the session)'
+const MAX_DIRTY = 15 // more uncommitted files than this is a bulk change; don't demand each by name
+
+const redact = (s: string) => SECRETS.reduce((t, re) => t.replace(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g'), '[redacted]'), s)
+const flat = (s: string) => s.replace(/\s+/g, ' ').trim()
+// Paths from `git status --porcelain` (always repo-relative), handoffs and renames' old names left out.
+// A path counts as named when it appears whole, or its file name does without a longer name around it (a.ts, not data.ts).
+const mentions = (text: string, f: string) => text.includes(f) ||
+  new RegExp(`(?:^|[^\\w.-])${f.split('/').pop()!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'm').test(text)
+const dirtyPaths = (porcelain: string) =>
+  // git() trims output, so the first line may have lost its leading status space.
+  porcelain.split('\n').map(l => l.replace(/^[ MADRCUT?!]{1,2} /, '')).filter(Boolean).map(l => l.split(' -> ').pop()!.replace(/^"|"$/g, '').replace(/\/$/, ''))
+    .filter(f => f !== cfg.dir && !f.startsWith(`${cfg.dir}/`))
 
 let cfg = config({})
 
@@ -180,10 +194,10 @@ async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {
     head = (await git($, 'rev-parse', '--short', 'HEAD')) || undefined
     const files = (await git($, 'status', '--porcelain')).split('\n').map(l => l.trim()).filter(Boolean)
     repo = `branch ${branch}${head ? ` · HEAD ${head} (copy it into "## Repo state")` : ''} · uncommitted: ${files.length ? files.slice(0, 12).join(', ') + (files.length > 12 ? `, +${files.length - 12} more` : '') : 'none'}`
-    check = 'Check that `git status` matches its "Repo state" section, then start with Next step 1.'
+    check = 'Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.'
     await excludeDir($, await git($, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'), root)
   }
-  const prompt = `Resume paused work in ${root}.\nRead ${path} first. It is your only context from the previous session.\n${check}\nRead only the files it points to unless you need more.`
+  const prompt = `Resume paused work in ${root}.\nRead ${path} first. It is your only context from the previous session.\n${check}\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.`
   const notice = [
     `AUTO-PAUSE: pause threshold reached. ${usage(kind, used, resetsAt)}`,
     `Do not start new work. Finish or revert the step in progress (at most ${cfg.gateCalls} more tool calls), then use the writing-handoffs skill and write exactly the handoff path below.`,
@@ -207,10 +221,10 @@ async function excludeDir($: $, exclude: string, root: string) {
   await $.fs.write(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`).catch(() => {})
 }
 
-function validate(text: string, headNow = '') {
+function validate(full: string, headNow = '', dirty: string[] = []) {
   const problems: string[] = []
+  const text = full.split(FACTS)[0]!
   const top = text.split('\n').slice(0, 25).join('\n')
-  const flat = (s: string) => s.replace(/\s+/g, ' ').trim()
   if (pause ? !flat(top).includes(flat(pause.prompt)) : !/Resume paused work in /.test(top))
     problems.push(pause ? 'Put the resume prompt from the AUTO-PAUSE notice verbatim in a ```text block at the top.' : 'Put the resume prompt in a ```text block at the top.')
   for (const h of REQUIRED) if (!new RegExp(`^##\\s+${h}\\b`, 'mi').test(text)) problems.push(`Add the "## ${h}" section.`)
@@ -224,6 +238,9 @@ function validate(text: string, headNow = '') {
   // Either the commit at the pause or the current one (Claude may have committed during the grace calls).
   const heads = [pause?.head, headNow].filter((h): h is string => !!h)
   if (heads.length && repo && !heads.some(h => (repo[1] ?? '').includes(h))) problems.push(`"## Repo state" must name HEAD ${headNow || heads[0]}, the commit this handoff was written at.`)
+  // A file left out here is work the next session never hears about (often one edited during the grace calls).
+  const missing = dirty.length <= MAX_DIRTY ? dirty.filter(f => !mentions(text, f)) : []
+  if (missing.length) problems.push(`Name these uncommitted files and their state in "## Status" or "## Repo state": ${missing.join(', ')}.`)
   if (SECRETS.some(re => re.test(text))) problems.push('Remove the secret-looking string (key, token, password, or private key).')
   return problems
 }
@@ -250,14 +267,34 @@ async function finishPause($: $, outcome: Outcome = 'verified') {
   await logOutcome($, outcome)
 }
 
+// What the session itself shows, with no model call: the user's own last requests (so the next
+// session works from their words, not a paraphrase) and the files edited. Harness text that arrives
+// as a user message (system reminders, command tags, hook feedback) is skipped.
+async function sessionFacts($: $, root: string) {
+  const msgs = await $.session.messages().catch(() => [])
+  // Redact before flattening: some secret patterns match only at the start of a line.
+  const asks = msgs.filter(m => m.role === 'user').map(m => m.text.replace(/^\s*(?:<([\w-]+)[^>]*>[\s\S]*?<\/\1>\s*)+/, '').trim())
+    .filter(t => t && !/^(?:[\w ]{0,30}:\s*)?AUTO-PAUSE[: ]/.test(t)).slice(-3).map(t => flat(redact(t)).slice(0, 400))
+  const edited = [...new Set(msgs.flatMap(m => m.toolUses ?? []).filter(u => FILE_TOOLS.has(u.tool)).map(u => String(u.input.file_path)))]
+    .filter(f => !f.includes(`/${cfg.dir}/`)).map(f => (f.startsWith(`${root}/`) ? f.slice(root.length + 1) : f))
+  return { asks, edited }
+}
+
+async function appendFacts($: $, file: string, text: string, root: string) {
+  const { asks, edited } = await sessionFacts($, root)
+  if (!asks.length && !edited.length) return
+  const lines = [FACTS]
+  if (asks.length) lines.push(`Last user request${asks.length > 1 ? 's, oldest first' : ''} (verbatim, trimmed):`, ...asks.map(a => `- "${a}"`))
+  if (edited.length) lines.push(`Files edited in the old session: ${edited.slice(0, 30).join(', ')}${edited.length > 30 ? `, +${edited.length - 30} more` : ''}`)
+  await $.fs.write(file, `${text.split(FACTS)[0]!.trimEnd()}\n\n${lines.join('\n')}\n`).catch(() => {})
+}
+
 // A facts-only handoff the mod writes itself when Claude could not write a checked one
 // (MohammadMD1383's StopFailure snapshot). No model turn, so it works at the limit too.
 async function writeFallback($: $, why: string) {
   if (!pause) return
-  const msgs = await $.session.messages().catch(() => [])
-  let ask = [...msgs].reverse().find(m => m.role === 'user' && m.text.trim())?.text.trim()
-  for (const re of SECRETS) ask = ask?.replace(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g'), '[redacted]')
-  const edited = [...new Set(msgs.flatMap(m => m.toolUses ?? []).filter(u => FILE_TOOLS.has(u.tool)).map(u => String(u.input.file_path)))]
+  const { asks, edited } = await sessionFacts($, pause.root)
+  const ask = asks.at(-1)
   const partial = await $.fs.exists(pause.path).catch(() => false)
   if (partial) {
     // Keep what Claude wrote; point the prompt at the facts file.
@@ -274,7 +311,7 @@ async function writeFallback($: $, why: string) {
     '',
     '```text', pause.prompt, '```',
     '',
-    '## Goal', ask ? `Last user request (verbatim, first 600 characters): ${ask.slice(0, 600)}` : 'Unknown: read the old session.',
+    '## Goal', ask ? `Last user request (verbatim, first 400 characters): ${ask}` : 'Unknown: read the old session.',
     '',
     '## Status', edited.length ? `Files edited in the old session: ${edited.slice(0, 30).join(', ')}` : 'Unknown.',
     '',
@@ -357,8 +394,10 @@ export const register: Register = (on, options) => {
       context.push(`AUTO-PAUSE: the resume prompt names ${pause!.path}. Write the handoff to exactly that path.`)
     } else if (FILE_TOOLS.has(e.tool) && !r.isError && isHandoffFile(file)) {
       const text = await $.fs.read(String(file)).catch(() => undefined)
-      const problems = text === undefined ? [] : validate(text, pause?.head ? await git($, 'rev-parse', '--short', 'HEAD') : '')
+      const root = pause?.root ?? (await git($, 'rev-parse', '--show-toplevel'))
+      const problems = text === undefined ? [] : validate(text, pause?.head ? await git($, 'rev-parse', '--short', 'HEAD') : '', root ? dirtyPaths(await git($, '-c', 'core.quotePath=false', 'status', '--porcelain')) : [])
       if (text !== undefined && !problems.length) {
+        await appendFacts($, String(file), text, root || (await $.session.cwd()))
         if (active) await finishPause($)
         context.push(`AUTO-PAUSE: handoff OK. End your turn now with the handoff path${pause ? `, when usage resets` : ''}, and the resume prompt verbatim in a \`\`\`text block.`)
       } else if (problems.length && active && (pause!.fixes = (pause!.fixes ?? 0) + 1) >= MAX_FIXES) {

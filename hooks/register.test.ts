@@ -5,7 +5,7 @@ const ROOT = '/Users/me/My Projects/app'
 const RESETS = '2026-10-19T22:00:00.000Z'
 const NEXT_RESETS = '2026-10-20T03:00:00.000Z'
 
-type World = { files: Map<string, string>; calls: string[]; notes: string[]; store: Map<string, unknown>; head: { value: string }; ask: { value: string }; id: { value: string } }
+type World = { files: Map<string, string>; calls: string[]; notes: string[]; store: Map<string, unknown>; head: { value: string }; ask: { value: string }; id: { value: string }; status: { value: string } }
 
 // The engine beneath the plugin: git in a repo with one change, files in memory,
 // every tool answering ok (Write/Edit store their text so validation can read it).
@@ -16,6 +16,7 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   const head = { value: 'abc1234' }
   const ask = { value: 'Fix the date parser' }
   const id = { value: 'unknown' }
+  const status = { value: ' M src/a.ts\n M src/c.ts\n?? src/b.ts\n' }
   mock.clock(on, { now: Date.parse('2026-10-19T15:02:00Z') })
   // A store the test can read back, so saved state can be checked.
   const kv = new Map<string, unknown>(Object.entries(store))
@@ -30,13 +31,13 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('process.run', ($, e) => {
-    const a = e.argv.slice(1).join(' ')
+    const a = e.argv.slice(1).join(' ').replace('-c core.quotePath=false ', '')
     const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     if (!git) return { value: { ...out('').value, exitCode: 128 } }
     if (a === 'rev-parse --show-toplevel') return out(`${ROOT}\n`)
     if (a === 'branch --show-current') return out('main\n')
     if (a === 'rev-parse --short HEAD') return out(`${head.value}\n`)
-    if (a === 'status --porcelain') return out(' M src/a.ts\n M src/c.ts\n?? src/b.ts\n')
+    if (a === 'status --porcelain') return out(status.value)
     if (a === 'rev-parse --path-format=absolute --git-path info/exclude') return out(`${ROOT}/.git/info/exclude\n`)
     return out('')
   })
@@ -58,12 +59,14 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   on('classic.Stop', () => ({}))
   on('classic.StopFailure', () => ({}))
   on('session.messages', () => ({ value: [
+    { role: 'user', text: 'Start with the parser module', toolUses: [] },
     { role: 'user', text: ask.value, toolUses: [] },
+    { role: 'user', text: '<system-reminder>harness text</system-reminder>', toolUses: [] },
     { role: 'assistant', text: '', toolUses: [{ tool_use_id: 't1', tool: 'Edit', input: { file_path: `${ROOT}/src/a.ts` } }] },
   ] }) as never)
   on('ui.notify', ($, e) => (notes.push(e.text), { value: { isSent: true, channel: 'test' } }) as never)
   on('session.id', () => ({ value: id.value }))
-  return { files, calls, notes, store: kv, head, ask, id }
+  return { files, calls, notes, store: kv, head, ask, id, status }
 }
 
 const reading = (used: number, kind = 'five_hour', resetsAt = RESETS) => ({
@@ -92,7 +95,7 @@ Ship it · Done when: tests pass
 1. Edit src/b.ts line 3.
 
 ## Repo state
-main · abc1234 · uncommitted: src/a.ts
+main · abc1234 · uncommitted: src/a.ts, src/b.ts, src/c.ts
 ${extra}`
 
 const bash = { tool: 'Bash', command: 'ls' } as const
@@ -144,7 +147,7 @@ describe('thresholds', () => {
     expect(notice).toContain('Repo state: branch main · HEAD abc1234 (copy it into "## Repo state") · uncommitted: M src/a.ts, M src/c.ts, ?? src/b.ts')
     expect(prompt).toContain(`Resume paused work in ${ROOT}.`)
     expect(prompt).toContain(`Read ${path} first.`)
-    expect(prompt).toContain('Check that `git status` matches')
+    expect(prompt).toContain('Check that `git status` and HEAD match')
     expect(w.files.get(`${ROOT}/.git/info/exclude`)).toContain('\n/.handoffs/\n')
     await $.session.measure(reading(95))
     expect(ctx(await $.tool.call(bash))).toBe('')
@@ -459,7 +462,7 @@ describe('refinements from the competitor review', () => {
     const text = w.files.get(path)!
     expect(text).toContain('# Handoff: facts only')
     expect(text).toContain('Fix the date parser')
-    expect(text).toContain(`${ROOT}/src/a.ts`)
+    expect(text).toContain('Files edited in the old session: src/a.ts')
     expect(text).toContain('HEAD abc1234')
     expect(text).toContain(`Read ${path} first.`)
     expect(w.notes[0]).toContain(path)
@@ -582,5 +585,81 @@ describe('review fixes', () => {
     await start($)
     expect((await $.tool.call(bash)).deny).toBeUndefined()
     expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('auto-pause: normal')
+  })
+})
+
+describe('snapshot accuracy', () => {
+  test('a handoff that leaves out an uncommitted file is sent back with the file named', async ($, on) => {
+    const w = world(on); await start($)
+    const { path, prompt } = await pauseNotice($)
+    // src/d.ts was changed during the grace calls, after the notice listed the repo state.
+    w.status.value = ' M src/a.ts\n M src/c.ts\n?? src/b.ts\nR  old.ts -> src/d.ts\n?? .handoffs/x.md\n'
+    const c = ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))
+    expect(c).toContain('Name these uncommitted files and their state in "## Status" or "## Repo state": src/d.ts.')
+    expect(c).not.toContain('.handoffs')
+  })
+
+  test('a bulk change over 15 files is not checked file by file', async ($, on) => {
+    const w = world(on); await start($)
+    const { path, prompt } = await pauseNotice($)
+    w.status.value = Array.from({ length: 16 }, (_, i) => `?? gen/f${i}.ts`).join('\n')
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))).toContain('handoff OK')
+  })
+
+  test('a checked handoff gets the user\'s own words and the edited files appended, harness text skipped', async ($, on) => {
+    const w = world(on); await start($)
+    w.ask.value = 'Fix the date parser, key sk-ant-api03-' + 'a1B2'.repeat(6)
+    const { path, prompt } = await pauseNotice($)
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))).toContain('handoff OK')
+    const text = w.files.get(path)!
+    expect(text).toContain('## Session facts (added by auto-pause, read from the session)')
+    expect(text).toContain('- "Start with the parser module"\n- "Fix the date parser, key [redacted]"')
+    expect(text).not.toContain('system-reminder')
+    expect(text).toContain('Files edited in the old session: src/a.ts')
+    // A later edit is checked without the appended section, and the section is not duplicated.
+    expect(ctx(await $.tool.call({ tool: 'Edit', file_path: path, old_string: 'Ship it', new_string: 'Ship it now' } as never))).toContain('handoff OK')
+    expect(w.files.get(path)!.split('## Session facts').length).toBe(2)
+  })
+
+  test('secrets on their own line and private-key bodies are redacted from the appended requests', async ($, on) => {
+    const w = world(on); await start($)
+    w.ask.value = 'use this:\nexport API_TOKEN=abcd1234efgh\n-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----\nthanks'
+    const { path, prompt } = await pauseNotice($)
+    await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never)
+    const text = w.files.get(path)!
+    expect(text).not.toContain('abcd1234efgh')
+    expect(text).not.toContain('MIIEvQIBADANBg')
+    expect(text).toContain('thanks')
+  })
+
+  test('a request after an IDE tag or one that mentions AUTO-PAUSE is kept; hook feedback is not', async ($, on) => {
+    const w = world(on); await start($)
+    w.ask.value = '<ide_opened_file>src/a.ts</ide_opened_file> why did AUTO-PAUSE fire?'
+    const { path, prompt } = await pauseNotice($)
+    await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never)
+    expect(w.files.get(path)!).toContain('- "why did AUTO-PAUSE fire?"')
+  })
+
+  test('the mod\'s own feedback is not taken for a user request', async ($, on) => {
+    const w = world(on); await start($)
+    w.ask.value = 'Stop hook feedback:\nAUTO-PAUSE: pause threshold reached.'
+    const { path, prompt } = await pauseNotice($)
+    await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never)
+    expect(w.files.get(path)!).not.toContain('threshold reached')
+  })
+
+  test('a longer file name does not count as naming a dirty file', async ($, on) => {
+    const w = world(on); await start($)
+    const { path, prompt } = await pauseNotice($)
+    w.status.value = ' M src/a.ts\n M src/c.ts\n?? src/b.ts\n M lib/x.ts\n M "caf\u00e9.ts"\n'
+    const c = ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt, 'Also touched lib/data.ts') } as never))
+    expect(c).toContain('Repo state": lib/x.ts, café.ts.')
+  })
+
+  test('the resume prompt says what to do when the repo differs and to stay within the Goal', async ($, on) => {
+    world(on); await start($)
+    const { prompt } = await pauseNotice($)
+    expect(prompt).toContain('(if not, tell the user before editing)')
+    expect(prompt).toContain('ask the user before doing anything outside its Goal')
   })
 })

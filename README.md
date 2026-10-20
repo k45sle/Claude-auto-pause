@@ -9,8 +9,11 @@ Status: in development (pre-0.1.0). [PLAN.md](PLAN.md) has the design, `docs/pha
 1. At 15% left in the 5-hour window (10% weekly) it adds a warning to the next tool result.
 2. At 8% left (3% weekly) it tells Claude to finish or revert the current step and write a handoff to an exact path in `.handoffs/`. That path and a resume prompt with absolute paths are in the notice. Subagents are told to return, and new ones are refused.
 3. After 5 more tool calls, or 3 more usage points, every tool is refused except the handoff, reads, and read-only git.
-4. When Claude writes the handoff, the plugin checks it: the resume prompt is there verbatim, the required sections exist, the current commit is named, it fits the word budget, and nothing looks like a secret. A valid handoff opens the gate and Claude ends its turn with the resume prompt.
-5. If Claude ends the turn twice without a valid handoff, or the limit hits first, the plugin writes a facts-only handoff itself (last request, edited files, branch, commit, uncommitted files) and sends a desktop notification. This needs no model call.
+4. When Claude writes the handoff, the plugin checks it: the resume prompt is there verbatim, the required sections exist, the current commit and every uncommitted file are named, it fits the word budget, and nothing looks like a secret. A valid handoff opens the gate and Claude ends its turn with the resume prompt.
+5. Once the handoff passes, the plugin adds a "Session facts" section at the end: your last few messages, word for word, and the files Claude edited. It reads these from the session, so no model call is spent, and the next session works from what you asked for rather than Claude's summary of it.
+6. If Claude ends the turn twice without a valid handoff, or the limit hits first, the plugin writes a facts-only handoff itself (last request, edited files, branch, commit, uncommitted files) and sends a desktop notification. This needs no model call.
+
+The resume prompt tells the new session to compare `git status` and the current commit with the handoff and tell you before editing if they differ. It also tells it to ask you before doing anything outside the handoff's Goal.
 
 The pause is saved per session, so `/reload-plugins` or a plugin update mid-pause keeps it. After three failed checks the gate opens anyway, so a session never stays locked.
 

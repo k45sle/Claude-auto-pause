@@ -26,8 +26,8 @@ A handoff is one Markdown file that lets a fresh session continue this task with
      ```text
      Resume paused work in <project root>.
      Read <handoff path> first. It is your only context from the previous session.
-     Check that `git status` matches its "Repo state" section, then start with Next step 1.
-     Read only the files it points to unless you need more.
+     Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.
+     Read only the files it points to unless you need more, and ask the user before doing anything outside its Goal.
      ```
 3. **Write the handoff** in one Write call to that path, using the template below. Put the resume prompt verbatim in the fenced block at the top.
 4. **If a monitor message lists problems** with the handoff, fix all of them in one Edit.
@@ -55,6 +55,7 @@ Resume prompt (paste into a new Code session):
 - Done: <finished pieces, with files>
 - In progress: <exact state, e.g. "auth.ts migrated through refreshToken(); session.ts untouched">
 - Not started: <remaining pieces>
+- Last request: <answered | partly | not started>; <what is left of it>
 
 ## Next steps
 1. <first action, doable as written: file and change, or the exact command>
@@ -81,6 +82,8 @@ Resume prompt (paste into a new Code session):
 - Next step 1 must be doable as written, by someone who has read nothing else: name the file and the change, or give the exact command.
 - Point to code by `path:line` or function name. Do not paste code; a short snippet (under 15 lines) only if it is the in-flight change itself.
 - Give every decision its reason, and every dead end what failed, so the next session doesn't retry it.
+- Name every uncommitted file and its state. The plugin checks this against `git status`.
+- Don't quote the user's messages or list edited files for the record: after the check passes, the plugin appends both, read from the session.
 - Record the last test result you actually saw. Do not run tests just for the handoff.
 - Write for a stranger: no "as discussed", no "the thing we fixed".
 
@@ -103,6 +106,7 @@ Resume prompt (paste into a new Code session):
 - Done: backoff helper in src/retry.ts with tests (pass).
 - In progress: src/client.ts `request()` wraps fetch in `withRetry` (client.ts:41); `stream()` not wrapped yet.
 - Not started: honoring the Retry-After header.
+- Last request: partly; `stream()` and Retry-After are left.
 
 ## Next steps
 1. In src/client.ts `stream()` (line 88), wrap the fetch call in `withRetry` like `request()` does at line 41.

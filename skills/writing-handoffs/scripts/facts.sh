@@ -4,7 +4,7 @@
 set -u
 slug=$(printf '%s' "${1:-task}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-*//; s/-*$//' | cut -c1-40)
 [ -n "$slug" ] || slug=task
-# shortcut: folder is fixed; read the plugin's handoff_dir option once Phase 2 adds userConfig.
+# shortcut: folder is fixed to .handoffs; a custom handoff_dir applies only on the auto path (the mod). Read the option here if users ask for it.
 dir_rel=.handoffs
 
 project=$(git rev-parse --show-toplevel 2>/dev/null) && in_git=1 || { project=$PWD; in_git=0; }
@@ -29,7 +29,7 @@ if [ "$in_git" = 1 ]; then
   echo "HEAD: $(git log -1 --format='%h %s' 2>/dev/null || echo '(no commits)')"
   echo "uncommitted:"; git status --short 2>/dev/null | sed 's/^/  /'
   echo "stashes: $(git stash list 2>/dev/null | wc -l | tr -d ' ')"
-  check='Check that `git status` matches its "Repo state" section, then start with Next step 1.'
+  check='Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.'
 else
   echo "git: not a repository"
   check='Check its "Repo state" section, then start with Next step 1.'
@@ -39,6 +39,6 @@ resume prompt:
 Resume paused work in $project.
 Read $path first. It is your only context from the previous session.
 $check
-Read only the files it points to unless you need more.
+Read only the files it points to unless you need more, and ask the user before doing anything outside its Goal.
 PROMPT
 exit 0

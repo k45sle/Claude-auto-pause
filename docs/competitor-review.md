@@ -49,3 +49,18 @@ Gaps none of them covered, added from the research's acceptance criteria:
 - `tsc` against the Claude Code 2.1.299 types (the Desktop build): no errors.
 - Headless smoke test with `AUTO_PAUSE_SIMULATE_PERCENT_LEFT=5` on Haiku in a scratch git repo, run before and after the review fixes: pause notice, handoff written to the exact path naming HEAD, check passed, resume prompt printed, `.handoffs/` added to `.git/info/exclude`. $0.013 and $0.009.
 - Not run: a Desktop session with a real or simulated pause after these changes, a reload mid-pause in Desktop, and a real `rate_limit` StopFailure.
+
+## Second pass: handoff accuracy (2026-10-20)
+
+A second read of six repos (handoff-now, claude-code-handoff, claude-auto-handoff, ormus-handoff, angkaworn handoff-guard, MohammadMD1383 usage-guard), this time looking only at how they make a handoff match the real state of the work.
+
+| Change | Taken from |
+|---|---|
+| The check fails a handoff that leaves out any uncommitted file in `git status` (skipped above 15 files). This catches files changed during the grace calls, after the notice listed the repo state. | claude-auto-handoff collects edited paths from tool history (`hooks/brief.ts:46-76`); the check against `git status` is ours |
+| After a handoff passes, the mod appends the user's last three messages word for word (secrets redacted) and the files edited, read from the session. Harness text sent as a user message (system reminders, command tags, hook feedback) is skipped. | claude-auto-handoff `brief.ts:38-44`, handoff-now `artifacts.rs:498-512` |
+| The template's Status asks whether the last request was answered, partly done, or not started. | claude-auto-handoff `brief.ts:148-157` |
+| The resume prompt says to tell the user before editing if `git status` or HEAD differ, and to ask before doing anything outside the Goal. | angkaworn handoff-guard's resume confirmation (`hooks/session-resume.mjs`) |
+
+Not taken: a Haiku subagent writing the handoff (handoff-now): switching model re-reads the history uncached. Handoff age checks at resume (angkaworn): you paste the prompt by hand, so it is never stale by accident. A per-file hash manifest (handoff-now): nothing reads it at resume.
+
+Checked: `claude plugin test .` 58/58 (after a reviewer found four bugs in the first version: secrets on their own line slipped past redaction, real requests starting with `<` were dropped, non-ASCII file names never matched, and `data.ts` counted as naming `a.ts`), `claude plugin validate .` passes, `tsc` against the 2.1.299 types exits 0. Two headless runs on Haiku in a scratch repo, with the pause landing after 2 and after 4 tool calls: both handoffs passed on the first write, named every changed file, and got the session facts appended ($0.009 and $0.010). Pasting the second run's resume prompt into a new session: it checked the repo state, wrote the missing test file (Next step 1) and stopped there ($0.008). Not run: a Desktop session with these changes.

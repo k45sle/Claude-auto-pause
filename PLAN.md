@@ -109,8 +109,8 @@ state   NORMAL          WARNED          PAUSING   GATED          (limit)
 ```text
 Resume paused work in /Users/<you>/code/<repo>.
 Read /Users/<you>/code/<repo>/.handoffs/2026-10-19T1502-fix-auth.md first. It is your only context from the previous session.
-Check that `git status` matches its "Repo state" section, then start with Next step 1.
-Read only the files it points to unless you need more.
+Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.
+Read only the files it points to unless you need more, and ask the user before doing anything outside its Goal.
 ```
 
 It appears in three places:
