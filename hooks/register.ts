@@ -204,6 +204,14 @@ function usage(kind: Kind, used: number, resetsAt?: string) {
   return `${LABEL[kind]} usage ${used}% used (${round(100 - used)}% left), ${resetsAt ? `resets ${stamp(new Date(resetsAt))}` : 'reset time unknown'}.`
 }
 
+// Same text as skills/writing-handoffs/scripts/facts.sh prints, so manual handoffs can be checked against it.
+function resumePrompt(root: string, path: string, inGit: boolean) {
+  const check = inGit
+    ? 'Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.'
+    : 'Check its "Repo state" section, then start with Next step 1.'
+  return `Resume paused work in ${root}.\nRead ${path} first. It is your only context from the previous session.\n${check}\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.`
+}
+
 async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {
   const top = await git($, 'rev-parse', '--show-toplevel')
   const root = top || (await $.session.cwd())
@@ -213,13 +221,11 @@ async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {
   for (let n = 2; await $.fs.exists(path).catch(() => false); n++) path = `${base}-${n}.md`
   let repo = 'not a git repository'
   let head: string | undefined
-  let check = 'Check its "Repo state" section, then start with Next step 1.'
   if (top) {
     const branch = (await git($, 'branch', '--show-current')) || '(detached)'
     head = (await git($, 'rev-parse', '--short', 'HEAD')) || undefined
     const files = (await git($, 'status', '--porcelain')).split('\n').map(l => l.trim()).filter(Boolean)
     repo = `branch ${branch}${head ? ` · HEAD ${head} (copy it into "## Repo state")` : ''} · uncommitted: ${files.length ? files.slice(0, 12).join(', ') + (files.length > 12 ? `, +${files.length - 12} more` : '') : 'none'}`
-    check = 'Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.'
     await excludeDir($, await git($, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'), root)
   }
   // A handoff folder that resolves outside the project (a symlink shipped in the repo) is never auto-approved.
@@ -228,7 +234,7 @@ async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {
   const here = await $.fs.stat(dir).catch(() => undefined)
   const dirReal = here && (await $.fs.stat(dir, { resolve: true }).catch(() => undefined))?.realPath
   const outside = here !== undefined && (dirReal === undefined || rootReal === undefined || !dirReal.startsWith(`${rootReal}/`))
-  const prompt = `Resume paused work in ${root}.\nRead ${path} first. It is your only context from the previous session.\n${check}\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.`
+  const prompt = resumePrompt(root, path, !!top)
   const notice = [
     `AUTO-PAUSE: pause threshold reached. ${usage(kind, used, resetsAt)} (This comes from the auto-pause plugin the user installed to save work before the usage limit.)`,
     `Do not start new work. Finish or revert the step in progress (at most ${cfg.gateCalls} more tool calls), then use the writing-handoffs skill and write exactly the handoff path below.`,
@@ -254,13 +260,20 @@ async function excludeDir($: $, exclude: string, root: string) {
   await $.fs.write(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`).catch(() => {})
 }
 
-function validate(full: string, headNow = '', dirty: string[] = []) {
+// `want` is the resume prompt this file must carry: the notice's while pausing, else the one built for its own path
+// (a prompt copied from an older handoff, or typed from memory, points the next session at the wrong file or skips the HEAD check).
+function validate(full: string, want: string, headNow = '', dirty: string[] = []) {
   const problems: string[] = []
   const text = full.split(FACTS)[0]!
   const top = text.split('\n').slice(0, 25).join('\n')
-  if (pause ? !flat(top).includes(flat(pause.prompt)) : !/Resume paused work in /.test(top))
-    problems.push(pause ? 'Put the resume prompt from the AUTO-PAUSE notice verbatim in a ```text block at the top.' : 'Put the resume prompt in a ```text block at the top.')
+  if (!flat(top).includes(flat(want)))
+    problems.push(pause ? 'Put the resume prompt from the AUTO-PAUSE notice verbatim in a ```text block at the top.' : `Put this resume prompt verbatim in a \`\`\`text block at the top:\n${want}`)
   for (const h of REQUIRED) if (!new RegExp(`^##\\s+${h}\\b`, 'mi').test(text)) problems.push(`Add the "## ${h}" section.`)
+  // An empty heading reads as "nothing here" or "forgot"; the next session can't tell which.
+  for (const m of text.matchAll(/^##[ \t]+([^\n]+)(?:\n|$)(?=\s*(?:^##\s|(?![\s\S])))/gm)) {
+    const h = m[1]!.trim()
+    problems.push(REQUIRED.some(r => h.startsWith(r)) ? `Fill the empty "## ${h}" section.` : `Fill or remove the empty "## ${h}" section.`)
+  }
   const next = /^##\s+Next steps\b[^\n]*\n([\s\S]*?)(?=^##\s|(?![\s\S]))/im.exec(text)
   if (next && !/^\s*(\d+\.|[-*])\s+\S/m.test(next[1] ?? '')) problems.push('"Next steps" needs at least one item.')
   const words = text.split(/\s+/).filter(Boolean).length
@@ -428,7 +441,8 @@ export const register: Register = (on, options) => {
     } else if (FILE_TOOLS.has(e.tool) && !r.isError && isHandoffFile(file)) {
       const text = await $.fs.read(String(file)).catch(() => undefined)
       const root = pause?.root ?? (await git($, 'rev-parse', '--show-toplevel'))
-      const problems = text === undefined ? [] : validate(text, pause?.head ? await git($, 'rev-parse', '--short', 'HEAD') : '', root ? dirtyPaths(await git($, '-c', 'core.quotePath=false', 'status', '--porcelain')) : [])
+      const want = pause?.prompt ?? resumePrompt(root || (await $.session.cwd()), String(file).startsWith('/') ? String(file) : `${await $.session.cwd()}/${file}`, !!root)
+      const problems = text === undefined ? [] : validate(text, want, pause?.head ? await git($, 'rev-parse', '--short', 'HEAD') : '', root ? dirtyPaths(await git($, '-c', 'core.quotePath=false', 'status', '--porcelain')) : [])
       if (text !== undefined && !problems.length) {
         await appendFacts($, String(file), text, root || (await $.session.cwd()))
         if (active) await finishPause($)

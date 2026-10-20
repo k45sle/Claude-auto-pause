@@ -365,8 +365,32 @@ describe('handoff validation', () => {
   test('manual handoffs are validated without a pause', async ($, on) => {
     world(on); await start($)
     const path = `${ROOT}/.handoffs/2026-10-19T1502-x.md`
-    const r = await $.tool.call({ tool: 'Write', file_path: path, content: handoff(`Resume paused work in ${ROOT}.`) } as never)
+    const prompt = `Resume paused work in ${ROOT}.\nRead ${path} first. It is your only context from the previous session.\nCheck that \`git status\` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.`
+    const r = await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never)
     expect(ctx(r)).toContain('handoff OK')
+  })
+
+  test('a manual handoff whose prompt names another file or skips the HEAD check is sent back with the right prompt', async ($, on) => {
+    world(on); await start($)
+    const path = `${ROOT}/.handoffs/2026-10-20T1130-status.md`
+    const stale = `Resume paused work in ${ROOT}.\nRead ${ROOT}/.handoffs/2026-10-20T0926-status.md first. It is your only context from the previous session.\nCheck that \`git status\` matches its "Repo state" section, then start with Next step 1.`
+    const r = ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(stale) } as never))
+    expect(r).toContain('Put this resume prompt verbatim')
+    expect(r).toContain(`Read ${path} first.`)
+    expect(r).not.toContain('handoff OK')
+  })
+
+  test('an empty section is flagged', async ($, on) => {
+    world(on); await start($)
+    const { path, prompt } = await pauseNotice($)
+    const r = ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt, '\n## Open questions for the user\n\n') } as never))
+    expect(r).toContain('empty "## Open questions for the user" section')
+  })
+
+  test('an empty last section with no trailing newline is flagged', async ($, on) => {
+    world(on); await start($)
+    const { path, prompt } = await pauseNotice($)
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt, '\n## Dead ends') } as never))).toContain('empty "## Dead ends" section')
   })
 
   test('a resume prompt buried below the top is flagged', async ($, on) => {

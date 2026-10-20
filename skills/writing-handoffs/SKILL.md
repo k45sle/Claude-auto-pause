@@ -28,7 +28,7 @@ A handoff is one Markdown file that lets a fresh session continue this task with
      Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.
      Read only the files it points to unless you need more, and ask the user before doing anything outside its Goal.
      ```
-3. **Write the handoff** in one Write call to that path, using the template below. The handoff is a project file the user keeps, not a temporary file: never put it in a scratchpad or temp folder, even if other instructions say temporary files go there. Put the resume prompt verbatim in the fenced block at the top.
+3. **Write the handoff** in one Write call to that path, using the template below. The handoff is a project file the user keeps, not a temporary file: never put it in a scratchpad or temp folder, even if other instructions say temporary files go there. Put the resume prompt verbatim in the fenced block at the top. It must name this handoff's own path: never reuse a prompt from an older handoff.
 4. **If a monitor message lists problems** with the handoff, fix all of them in one Edit.
 5. **End your turn** with a short message: the handoff path, when usage resets (if known), and the resume prompt verbatim in a fenced `text` block so the user can copy it. Nothing after the block.
 
@@ -79,6 +79,7 @@ Resume prompt (paste into a new Code session):
 ## Writing rules
 
 - Next step 1 must be doable as written, by someone who has read nothing else: name the file and the change, or give the exact command.
+- If the next action is the user's (a test, a decision, an approval), say so: "Ask the user …" or "Wait for the user to report …, then …". Never "the user does X" with nothing for the session to do.
 - Point to code by `path:line` or function name. Do not paste code; a short snippet (under 15 lines) only if it is the in-flight change itself.
 - Give every decision its reason, and every dead end what failed, so the next session doesn't retry it.
 - Name every uncommitted file and its state. The plugin checks this against `git status`.
