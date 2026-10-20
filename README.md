@@ -2,7 +2,7 @@
 
 A Claude Code plugin that watches your 5-hour and weekly usage. Shortly before you hit the limit, it gets Claude to stop at a safe point, write a handoff file, and give you a resume prompt to paste into a new session after the reset.
 
-Status: 0.1.3, still being tuned on real use. [PLAN.md](PLAN.md) has the design, `docs/phase*-results.md` has what was tested in each phase, [docs/competitor-review.md](docs/competitor-review.md) compares it with similar plugins, and [docs/user-testing.md](docs/user-testing.md) has the simulated-user and abuse testing.
+Status: 0.1.4, still being tuned on real use. [PLAN.md](PLAN.md) has the design, `docs/phase*-results.md` has what was tested in each phase, [docs/competitor-review.md](docs/competitor-review.md) compares it with similar plugins, and [docs/user-testing.md](docs/user-testing.md) has the simulated-user and abuse testing.
 
 ## Requirements
 
@@ -21,11 +21,27 @@ claude plugin marketplace add k45sle/Claude-auto-pause
 claude plugin install auto-pause@k45sle --scope user
 ```
 
+If Terminal answers `command not found: claude`, install the Claude Code command-line tool first ([setup guide](https://code.claude.com/docs/en/setup)), open a new Terminal window, and run the two commands again. The install may report that 8 options are not set yet. You can ignore that: every setting has a default.
+
 Then quit and reopen the Claude Desktop app (or start a new `claude` in the terminal).
 
-To check that it works, type `/auto-pause-status` in a Code session. You should see `auto-pause: normal` and the warn and pause points. "No usage data yet" is normal until Claude has answered once.
+To check that it works, type `/auto-pause-status` in a Code session. You should see `State: normal` and the settings in use. "No usage data yet" is normal until Claude has answered once; if it never goes away, your plan sends no usage data (see Requirements).
 
-If `/auto-pause-status` is not offered in a chat, type `/reload-plugins` there first. The same goes for chats that were open before an update (`claude plugin update auto-pause@k45sle --scope user`).
+If `/auto-pause-status` is not offered in a chat, type `/reload-plugins` there first.
+
+## Update
+
+In the Terminal app:
+
+```bash
+claude plugin marketplace update k45sle
+```
+
+```bash
+claude plugin update auto-pause@k45sle --scope user
+```
+
+Then quit and reopen the Desktop app. Chats that were open before the update keep the old version until you type `/reload-plugins` in them.
 
 ## What you will see
 
@@ -52,10 +68,10 @@ The new session reads the handoff, checks that your files still match it, and st
 | `weekly_warn_at_percent_left` | 10 | The same warning for the 7-day limit |
 | `gate_after_tool_calls` | 5 | Tool calls Claude gets after the pause notice to finish or undo its current step |
 | `gate_after_points` | 3 | How many more percent of usage Claude may spend after the pause notice, if it runs out before the tool calls do |
-| `handoff_dir` | `.handoffs` | Folder for handoffs, inside the project, using letters, digits, `.`, `_`, `-` and `/` |
-| `handoff_word_budget` | 600 | Target handoff length in words |
+| `handoff_dir` | `.handoffs` | Folder for handoffs, inside the project, using letters, digits, `.`, `_`, `-` and `/`. Use a folder that holds nothing else: the plugin keeps it out of git. `.git` and `.claude` are not allowed |
+| `handoff_word_budget` | 600 | Target handoff length in words, resume prompt included |
 
-A value out of range (a percentage above 100, for example) is ignored and the default is used.
+A value out of range (a percentage above 100, for example) is ignored and the default is used. Claude Code still says "Configuration saved", so check `/auto-pause-status`: it lists every value in use and any value it ignored. Keep each warn value above its pause value, or there is no separate warning.
 
 To change a setting, type `/plugin configure auto-pause@k45sle` in a Claude Code session. Or, in the Terminal app (the value goes in quotes):
 
@@ -111,6 +127,14 @@ claude plugin uninstall auto-pause@k45sle --scope user
 ```bash
 claude plugin marketplace remove k45sle
 ```
+
+Uninstalling leaves your handoffs where they are. In each project it paused in, delete the `.handoffs` folder if you no longer want it, and the `/.handoffs/` line in `.git/info/exclude` (open it with any text editor). Claude Code may also keep the old plugin files and a small state file (calibration and the latest resume prompts) under `~/.claude/plugins/`; they do nothing once the plugin is gone.
+
+## Security
+
+- While pausing, the plugin approves two things without asking you: writing the handoff file it named, and read-only git (`status`, `diff`, `log`, `show`, `rev-parse`, `branch`) on paths inside the project. It approves no git at all in a repo whose own `.git/config` sets programs for git to run, and no handoff folder that is a link out of the project.
+- The handoff and its session facts are checked for common secret formats, which are refused or replaced with `[redacted]`. The check cannot catch everything, so read a handoff before you paste it anywhere outside your machine.
+- Like any Claude Code plugin, this one runs with your user account's permissions, and an update replaces its code. If that matters to you, install from your own reviewed copy of this repository (`claude plugin marketplace add /path/to/your/clone`) and update it only after reading the changes.
 
 ## License
 

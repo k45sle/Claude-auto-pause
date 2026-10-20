@@ -42,3 +42,73 @@ Not changed: a repo's project settings can set the simulate variables and force 
 `claude plugin test .`: 72 pass. `claude plugin validate .`: pass. `tsc` against the 2.1.299 types: no errors. Final end-to-end run on the installed 0.0.8: handoff checked, facts appended, $0.012.
 
 Not tested: a Desktop session, a real usage reading near the limit, and a real `rate_limit` stop.
+
+# Round 2: simulated users and abuse testing (2026-10-20, 0.1.3 to 0.1.4)
+
+Claude Code 2.1.303 on macOS. Four agents ran in parallel, one per persona: a newcomer following the README word for word, a messy real user, an attacker targeting users, and a read-only audit of what the publisher exposes. Personas 1 to 3 installed the plugin from a local clone of HEAD into a scratch `CLAUDE_CONFIG_DIR` and drove headless Haiku runs, with the pause forced by `AUTO_PAUSE_SIMULATE_PERCENT_LEFT`. Their Haiku runs cost $0.17 in total. Round 1's scenarios were not repeated; `claude plugin test .` covers them.
+
+A fresh `CLAUDE_CONFIG_DIR` is not logged in, so model runs used the real login with `--plugin-dir <installed copy> --setting-sources project,local --no-session-persistence --strict-mcp-config`. That loads only the test copy, but the mod's store still lands in `~/.claude/plugins/store/auto-pause_inline-*.json`.
+
+## Simulated users
+
+| Scenario | Model | Result |
+|---|---|---|
+| Install, `/auto-pause-status`, the README's configure command, update to a bumped version, uninstall | none | All worked. The README did not explain the "8 userConfig options not yet set" message, had no Update section, and did not say what uninstall leaves behind |
+| Pause after 2 tool calls in a git project, then the resume prompt in a new session | Haiku | Handoff checked and facts appended; the new session confirmed git state and did the next steps |
+| Manual handoff with two uncommitted files | Haiku | Usage and word budget arrived on the facts.sh call and went into the handoff |
+| Pause in a folder that is not a git repo | Haiku | Worked, no exclude line written |
+| Two sessions in one project pausing in the same minute | Haiku | Failed: both got the same handoff path and one overwrote the other |
+| Monorepo subfolder; folder and file names with spaces and non-ASCII letters | Haiku | Worked, but names showed octal-escaped and `cd "<root>" && git status` lost auto-approval |
+| Pause while a subagent runs | Haiku | The subagent stopped and returned; the parent then used its grace calls to redo the subagent's remaining writes |
+| No usage data (API key, Team) | none | Stays idle; the status line read as if data would arrive later |
+| Pause above warn, 0 grace calls, 100-word budget, nested `handoff_dir` | Haiku | Worked; a warn at or below pause never warns and nothing says so |
+| Resume after a new commit, and after a file changed under the same status line | Haiku | Both differences reported to the user before any edit |
+| 40 changed files | none (offline) | As designed: 12 listed plus "+28 more", no per-file check above 15 |
+| Planted handoff with an injected extra step, opened through its resume prompt | Haiku | Claude did the real task, refused the injected step and told the user |
+
+## What the testing found and what changed (0.1.4)
+
+Against users, most harmful first:
+
+- `git diff .env /dev/null` and `git diff ~/.aws/credentials x` printed the whole file, and the gate approved them without asking. Git switches to a no-index diff when a path is outside the repo, so blocking the `--no-index` flag was not enough. The allowlist now refuses absolute paths, `~` and `..` path segments; ranges like `HEAD~1..HEAD` still pass.
+- A repo whose own `.git/config` sets `core.fsmonitor` or `diff.external` ran a program through the "read-only" `git status` and `git diff`. The mod's own git calls now pass `-c core.fsmonitor=false`. While pausing it approves no Bash git in a repo whose local config sets fsmonitor to a program, diff drivers, filters, gpg or includes.
+- A dangling symlink planted at the handoff file name was picked as the path, and the facts-only fallback wrote through it to a file outside the project. File names are now checked without following links (mod and facts.sh). The fallback never writes through a link or into a folder that leads outside, and a handoff whose real path is outside the project is neither checked nor extended.
+- Two sessions pausing in one project in the same minute shared a path. Auto-pause file names now end in six characters of the session id.
+- Redaction missed `https://user:pass@` URLs, GitLab and Stripe keys, JWTs, npm `_authToken`, JSON `"password"` fields and `DB_PASS=` lines. All are caught now. The env-line pattern took quadratic time on long runs of newlines; it is linear now.
+- A file name containing a quote could never be named the way validation wanted, so after three tries the gate opened with an unverified handoff. Git's C-style quoting is decoded, and every status call uses `core.quotePath=false`.
+
+Found by the user personas:
+
+- A second handoff after a finished or released pause was checked against the old pause's resume prompt and could never pass. The notice's prompt now applies only while the pause is active.
+- 0.1.3's tag stripping removed a user's own leading tags, so `<task>Fix the parser</task> and rerun` became "and rerun", and a request made only of tag blocks disappeared from the facts. Only harness tags are stripped now.
+- `cd "<root>" && git status` lost auto-approval when the folder name had non-ASCII letters, an apostrophe or parentheses. The check now follows bash quoting.
+- `handoff_dir` of `a//b` wrote an exclude line git ignores, `.git/...` and `.claude/...` (in any letter case) were accepted, and `src` hid the user's new source files from git status. Slashes collapse, `.git` and `.claude` fall back to `.handoffs`, and a folder that holds tracked files gets no exclude line.
+- facts.sh printed paths relative to a subfolder and octal-escaped names. It now runs git at the repo root with quotePath and fsmonitor off.
+- `/auto-pause-status` printed "auto-pause: auto-pause:" because the CLI adds the plugin name. It now starts with `State:`, lists every value in use, names any value it ignored, warns when warn is not above pause, and explains plans with no usage data.
+- README: what to do when `claude` is not found, the "options not set" message, an Update section, what uninstall leaves behind, and a Security section.
+
+Each fix has a test in hooks/register.test.ts (77 tests before, 123 now). The facts.sh fixes are checked by `hooks/facts.selfcheck.sh`, which runs real git in temp repos; the plugin test runner cannot spawn processes, so run it by hand. A reviewer pass on the full diff found three more bugs (the mod and facts.sh normalised `.//x` differently, `.Git` slipped past the check on macOS, and the tracked-folder check ran from a subfolder); each is fixed and tested.
+
+## Publisher audit (read-only)
+
+- Every human commit is by `RK <rk@m2.local>`, which links the k45sle handle to a machine name. Nothing else personal is in the history: no home paths, emails, tokens, transcripts or handoffs (`.handoffs/` and `evals/results/` were never committed). Changing the identity needs a history rewrite and force-push before the repo goes public; not done.
+- register.ts credits handoff-now for the redaction list and the read-only git rule. Its license is not recorded here and could not be found.
+- The install copies the whole repo, including PLAN.md, docs/ and evals/, about 390 KB that is not needed at runtime.
+- A malicious update runs as the user. The mod API has process.run and spawn, file read and write on any absolute path, http.fetch, env get and set, the session transcript, and tool.check approval of tool calls. The marketplace entry points at the default branch with no pinned commit or tag, so anyone who can push controls every user's next update. Nothing in the repo limits that; the README now says how to install from a reviewed clone.
+- README claims with no test: the weekly warn default, the organization-managed Stop hooks, the Desktop notification, and the prompt-cache cost argument. The no-data toast now has one.
+
+Not changed:
+
+- A repo with a hostile `.git/config` can still make the mod's own `git status` run a filter driver. Claude Code and the user's shell already run `git status` there, so the plugin adds no exposure, and `git clone` cannot set `.git/config`.
+- Two manual handoffs with the same slug in the same minute, in two sessions, still share a facts.sh path.
+- A file name alone counts as naming a file, so two same-named files in different folders pass with one mention.
+- After a subagent is stopped, the parent may redo its remaining work inside the grace calls.
+- Any Bash command that mentions the facts.sh path gets the usage line appended, even `cat` or `grep`. Harmless.
+
+## Checks
+
+`claude plugin test .`: 123 pass. `bash hooks/facts.selfcheck.sh`: all passed. `claude plugin validate .`: pass. `tsc` against the 2.1.299 types: no errors. End to end on the installed 0.1.4, in a folder named `Café work` with a non-ASCII file: the pause landed after 2 tool calls, the handoff at `.handoffs/<stamp>-auto-pause-<id>.md` passed on the first write and named both changed files, the session facts were appended, and `/auto-pause-status` showed the new layout; $0.008.
+
+Live, in the session that ran this round (the installed 0.1.3, real usage): the weekly warning arrived on a tool result at 90% used.
+
+Not tested: a Desktop session (`/auto-pause-status` as the first message of a new chat, notifications, `/reload-plugins` mid-pause), a real pause at the limit and a real `rate_limit` stop, an install on a second user account, Sonnet and Opus, an API-key account, git worktrees and submodules, Windows.

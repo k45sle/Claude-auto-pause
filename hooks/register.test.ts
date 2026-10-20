@@ -5,7 +5,7 @@ const ROOT = '/Users/me/My Projects/app'
 const RESETS = '2026-10-19T22:00:00.000Z'
 const NEXT_RESETS = '2026-10-20T03:00:00.000Z'
 
-type World = { files: Map<string, string>; calls: string[]; notes: string[]; store: Map<string, unknown>; head: { value: string }; ask: { value: string }; id: { value: string }; status: { value: string }; exclude: { value: string }; links: Map<string, string> }
+type World = { files: Map<string, string>; calls: string[]; notes: string[]; store: Map<string, unknown>; head: { value: string }; ask: { value: string }; id: { value: string }; status: { value: string }; exclude: { value: string }; links: Map<string, string>; top: { value: string }; config: { value: string }; tracked: { value: string }; runs: string[]; toasts: string[] }
 
 // The engine beneath the plugin: git in a repo with one change, files in memory,
 // every tool answering ok (Write/Edit store their text so validation can read it).
@@ -19,6 +19,11 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   const status = { value: ' M src/a.ts\n M src/c.ts\n?? src/b.ts\n' }
   const exclude = { value: `${ROOT}/.git/info/exclude\n` }
   const links = new Map<string, string>() // path -> where it really leads
+  const top = { value: ROOT } // what rev-parse --show-toplevel prints
+  const config = { value: '' } // git config --local --list
+  const tracked = { value: '' } // git ls-files -- <handoff folder>
+  const runs: string[] = [] // every git argv, as run
+  const toasts: string[] = []
   mock.clock(on, { now: Date.parse('2026-10-19T15:02:00Z') })
   // A store the test can read back, so saved state can be checked.
   const kv = new Map<string, unknown>(Object.entries(store))
@@ -33,10 +38,13 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('process.run', ($, e) => {
-    const a = e.argv.slice(1).join(' ').replace('-c core.quotePath=false ', '')
+    runs.push(e.argv.join(' '))
+    const a = e.argv.slice(1).join(' ').replace('-c core.fsmonitor=false ', '').replace('-c core.quotePath=false ', '')
     const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     if (!git) return { value: { ...out('').value, exitCode: 128 } }
-    if (a === 'rev-parse --show-toplevel') return out(`${ROOT}\n`)
+    if (a === 'rev-parse --show-toplevel') return out(`${top.value}\n`)
+    if (a === 'config --local --list') return out(config.value)
+    if (a.startsWith('ls-files')) return out(tracked.value)
     if (a === 'branch --show-current') return out('main\n')
     if (a === 'rev-parse --short HEAD') return out(`${head.value}\n`)
     if (a === 'status --porcelain') return out(status.value)
@@ -51,10 +59,13 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   })
   on('fs.write', ($, e) => (files.set(e.path, e.text), { value: undefined }))
   // links: path -> where it leads; '' = a dangling link, which a resolving stat rejects (as a real one would).
+  // A path exists when it is a file, a link, or a folder holding a file.
   on('fs.stat', ($, e) => {
     const to = links.get(e.path)
     if (to === '' && e.resolve) throw new Error('ENOENT')
-    return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: to !== undefined, realPath: to || e.path } } as never
+    const file = files.has(e.path)
+    if (!file && to === undefined && ![...files.keys()].some(k => k.startsWith(`${e.path}/`))) throw new Error('ENOENT')
+    return { value: { kind: file ? 'file' : 'dir', size: 0, mtimeMs: 0, isLink: to !== undefined, realPath: to || e.path } } as never
   })
   on('tool.call', ($, e) => {
     calls.push(e.tool)
@@ -74,7 +85,8 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   ] }) as never)
   on('ui.notify', ($, e) => (notes.push(e.text), { value: { isSent: true, channel: 'test' } }) as never)
   on('session.id', () => ({ value: id.value }))
-  return { files, calls, notes, store: kv, head, ask, id, status, exclude, links }
+  on('ui.toast', ($, e) => (toasts.push(e.text), { value: undefined }) as never)
+  return { files, calls, notes, store: kv, head, ask, id, status, exclude, links, top, config, tracked, runs, toasts }
 }
 
 const reading = (used: number, kind = 'five_hour', resetsAt = RESETS) => ({
@@ -226,7 +238,14 @@ describe('thresholds', () => {
     world(on); await start($)
     await $.session.measure({ context: { window: 200000 }, rateLimits: [], changed: ['context'] })
     expect(ctx(await $.tool.call(bash))).toBe('')
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('No usage data yet')
+    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('No usage data yet. It arrives with Claude\'s first reply on a Pro or Max plan')
+  })
+
+  test('the no-data toast fires once', async ($, on) => {
+    const w = world(on); await start($)
+    for (let i = 0; i < 3; i++) await $.session.measure({ context: { window: 200000 }, rateLimits: [], changed: ['context'] })
+    expect(w.toasts.length).toBe(1)
+    expect(w.toasts[0]).toContain('no usage data')
   })
 
   test('simulate env var pauses from session start', async ($, on) => {
@@ -236,7 +255,7 @@ describe('thresholds', () => {
     expect(path).toContain('/.handoffs/')
     expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))).toContain('handoff OK')
     const status = (await $.command.run({ command: 'auto-pause-status', args: '' })).text!
-    expect(status).toContain('auto-pause: paused (simulated 6% left)')
+    expect(status).toContain('State: paused (simulated 6% left)')
     expect(status).not.toContain('Calibration')
   })
   test('simulate after N calls lands mid-task, on main or subagent calls', async ($, on) => {
@@ -324,7 +343,7 @@ describe('handoff validation', () => {
     expect((await $.tool.call(bash)).deny).toBeUndefined()
     expect((await $.classic.Stop({ stop_hook_active: false })).block).toBeUndefined()
     const status = (await $.command.run({ command: 'auto-pause-status', args: '' })).text!
-    expect(status).toContain('auto-pause: paused')
+    expect(status).toContain('State: paused')
     expect(status).toContain(prompt)
     expect(status).toContain('Calibration: 1 pause(s): 1 verified, 0 facts-only, 0 released, 0 reset before a handoff.')
     expect(status).toContain('Handoff cost p95 2 points. Suggested pause_at_percent_left: 4.')
@@ -432,7 +451,7 @@ describe('windows', () => {
     await pauseNotice($)
     await $.session.measure(reading(3, 'five_hour', NEXT_RESETS))
     expect((await $.tool.call(bash)).deny).toBeUndefined()
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('auto-pause: normal')
+    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('State: normal')
     await $.session.measure(reading(95, 'five_hour', NEXT_RESETS))
     expect(ctx(await $.tool.call(bash))).toContain('pause threshold reached')
   })
@@ -456,7 +475,7 @@ describe('refinements from the competitor review', () => {
     }
     world(on, {}, true, { 'session:unknown': saved }); await start($)
     expect((await $.tool.call(bash)).deny).toContain('AUTO-PAUSE gate')
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('auto-pause: gated')
+    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('State: gated')
   })
 
   test('state is saved after each change', async ($, on) => {
@@ -544,7 +563,7 @@ describe('refinements from the competitor review', () => {
     await $.classic.StopFailure({ error: 'rate_limit' } as never)
     const written = [...w.files.keys()].find(k => k.includes('/.handoffs/'))!
     expect(w.files.get(written)).toContain('The usage limit was hit before the handoff was written.')
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('auto-pause: paused')
+    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('State: paused')
   })
 
   test('other StopFailure errors do nothing', async ($, on) => {
@@ -566,9 +585,9 @@ describe('refinements from the competitor review', () => {
     await pauseNotice($)
     await $.session.measure(reading(98))
     expect((await $.tool.call(bash)).deny).toContain('AUTO-PAUSE gate')
-    expect((await $.command.run({ command: 'auto-pause-status', args: 'release' })).text).toContain('gate released by you')
+    expect((await $.command.run({ command: 'auto-pause-status', args: 'release' })).text).toContain('Gate released by you')
     expect((await $.tool.call(bash)).deny).toBeUndefined()
-    expect((await $.command.run({ command: 'auto-pause-status', args: 'release' })).text).toBe('auto-pause: nothing to release.')
+    expect((await $.command.run({ command: 'auto-pause-status', args: 'release' })).text).toBe('Nothing to release.')
     expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('1 released')
   })
 
@@ -638,7 +657,7 @@ describe('review fixes', () => {
     w.id.value = 'second-session'
     await start($)
     expect((await $.tool.call(bash)).deny).toBeUndefined()
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('auto-pause: normal')
+    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('State: normal')
   })
 })
 
@@ -785,5 +804,198 @@ describe('abuse and misconfiguration', () => {
     for (let i = 0; i < 4; i++) expect((await $.tool.call(bash)).deny).toBeUndefined() // the notice call plus 4: 5 grace calls, not 0 points
     expect((await $.tool.call(bash)).deny).toContain('AUTO-PAUSE gate')
     expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))).toContain('handoff OK')
+  })
+})
+
+describe('hardening', () => {
+  const gated = async ($: any) => { const p = await pauseNotice($); await $.session.measure(reading(98)); return p }
+  const status = async ($: any, args = '') => (await $.command.run({ command: 'auto-pause-status', args })).text as string
+  const prompt = (path: string) => `Resume paused work in ${ROOT}.\nRead ${path} first. It is your only context from the previous session.\nCheck that \`git status\` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.`
+  const p2 = (n: number) => String(n).padStart(2, '0')
+  const stampNow = () => { const d = new Date(Date.parse('2026-10-19T15:02:00Z')); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}${p2(d.getMinutes())}` }
+  const write = ($: any, file_path: string, content: string) => $.tool.call({ tool: 'Write', file_path, content } as never)
+
+  test('git cannot be pointed at files outside the repo, but ranges pass', async ($, on) => {
+    world(on); await start($); await gated($)
+    for (const command of ['git diff x /dev/null', 'git diff ~/.aws/credentials x', 'git diff ../secret x', 'git show HEAD ..', 'git diff /etc/passwd'])
+      expect((await $.tool.call({ tool: 'Bash', command } as never)).deny).toContain('AUTO-PAUSE gate')
+    for (const command of ['git diff HEAD~1..HEAD', 'git log -3 --stat', 'git log main..feature --oneline']) {
+      expect((await $.tool.call({ tool: 'Bash', command } as never)).deny).toBeUndefined()
+      expect((await $.tool.check({ tool: 'Bash', input: { command } } as never)).decision).toBe('allow')
+    }
+    expect((await $.tool.check({ tool: 'Bash', input: { command: 'git diff ~/.aws/credentials x' } } as never)).decision).toBe('ask')
+  })
+
+  for (const [cfg, ok] of [['core.fsmonitor=/tmp/x.sh', false], ['core.fsmonitor=true', true], ['core.fsmonitor', true], ['diff.external=/tmp/x.sh', false],
+    ['diff.foo.textconv=cat', false], ['filter.lfs.clean=x', false], ['include.path=../x', false], ['user.name=a=b', true]] as const)
+    test(`repo config ${cfg} ${ok ? 'keeps' : 'withholds'} the git auto-approval`, async ($, on) => {
+      const w = world(on); w.config.value = `core.bare=false\n${cfg}\n`; await start($)
+      await gated($)
+      expect((await $.tool.check({ tool: 'Bash', input: { command: 'git status' } } as never)).decision).toBe(ok ? 'allow' : 'ask')
+      expect((await $.tool.call({ tool: 'Bash', command: 'git status' } as never)).deny).toBeUndefined() // the gate's rescue is unchanged
+    })
+
+  test('internal git calls disable fsmonitor and quoting', async ($, on) => {
+    const w = world(on); await start($); await pauseNotice($)
+    expect(w.runs.length).toBeGreaterThan(0)
+    expect(w.runs.every(r => r.startsWith('git -c core.fsmonitor=false '))).toBe(true)
+    expect(w.runs.some(r => r.includes('-c core.quotePath=false status --porcelain'))).toBe(true)
+  })
+
+  test('sessions pausing in the same minute get different paths', async ($, on) => {
+    const w = world(on); w.id.value = 'aaaa-1111'; await start($)
+    const a = (await pauseNotice($)).path
+    w.id.value = 'bbbb-2222'; await start($)
+    const b = (await pauseNotice($)).path
+    expect(a.endsWith('-auto-pause-aaaa11.md')).toBe(true)
+    expect(b.endsWith('-auto-pause-bbbb22.md')).toBe(true)
+  })
+
+  test('a dangling link at the would-be name is skipped', async ($, on) => {
+    const w = world(on); w.links.set(`${ROOT}/.handoffs/${stampNow()}-auto-pause.md`, ''); await start($)
+    expect((await pauseNotice($)).path).toBe(`${ROOT}/.handoffs/${stampNow()}-auto-pause-2.md`)
+  })
+
+  test('the facts-only handoff never writes through a link at its path', async ($, on) => {
+    const w = world(on); await start($)
+    const { path } = await pauseNotice($)
+    const facts = path.replace(/\.md$/, '-facts')
+    w.links.set(path, '/tmp/elsewhere/x.md'); w.links.set(`${facts}.md`, '')
+    await $.classic.Stop({ stop_hook_active: false })
+    await $.classic.Stop({ stop_hook_active: true })
+    expect(w.files.has(path)).toBe(false)
+    expect(w.files.has(`${facts}.md`)).toBe(false)
+    expect(w.files.get(`${facts}-2.md`)).toContain(`Read ${facts}-2.md first.`)
+    expect(w.files.get(`${facts}-2.md`)).not.toContain('A partial handoff')
+  })
+
+  test('a handoff folder that leads outside gets no facts-only handoff', async ($, on) => {
+    const w = world(on); w.links.set(`${ROOT}/.handoffs`, '/tmp/elsewhere'); await start($)
+    await pauseNotice($)
+    await $.classic.Stop({ stop_hook_active: false })
+    await $.classic.Stop({ stop_hook_active: true })
+    expect([...w.files.keys()].some(k => k.includes('/.handoffs/'))).toBe(false)
+    expect(w.notes[0]).toContain('leads outside the project, so no facts-only handoff was written')
+    expect((await $.tool.call(bash)).deny).toBeUndefined()
+    expect(await status($)).not.toContain('Resume prompt:')
+  })
+
+  test('a handoff file that resolves outside the project is not checked or extended', async ($, on) => {
+    const w = world(on); await start($)
+    const { path, prompt: pr } = await pauseNotice($)
+    w.links.set(path, '/tmp/elsewhere/h.md')
+    const r = ctx(await write($, path, handoff(pr)))
+    expect(r).toContain('leads outside the project, so it was not checked or extended')
+    expect(r).not.toContain('handoff OK')
+    expect(w.files.get(path)).toBe(handoff(pr))
+  })
+
+  test('a handoff after a finished pause is checked against its own prompt', async ($, on) => {
+    const w = world(on); await start($)
+    const { path, prompt: pr } = await pauseNotice($)
+    expect(ctx(await write($, path, handoff(pr)))).toContain('handoff OK')
+    const next = `${ROOT}/.handoffs/2026-10-19T1700-more.md`
+    const r = ctx(await write($, next, handoff(prompt(next))))
+    expect(r).toContain('handoff OK')
+    expect(r).not.toContain('when usage resets')
+    expect(w.files.get(next)).toContain('## Session facts')
+  })
+
+  test('a handoff after a release is checked against its own prompt', async ($, on) => {
+    world(on); await start($)
+    await pauseNotice($)
+    await status($, 'release')
+    const next = `${ROOT}/.handoffs/2026-10-19T1700-more.md`
+    expect(ctx(await write($, next, handoff(prompt(next))))).toContain('handoff OK')
+  })
+
+  for (const ask of ['<task>Fix the parser</task> and rerun', '<task>Fix the parser</task>'])
+    test(`the user's own tag blocks stay in the session facts: ${ask}`, async ($, on) => {
+      const w = world(on); await start($)
+      w.ask.value = ask
+      const { path, prompt: pr } = await pauseNotice($)
+      await write($, path, handoff(pr))
+      expect(w.files.get(path)).toContain(`- "${ask}"`)
+    })
+
+  for (const [name, secret] of [
+    ['gitlab', 'glpat-a1B2c3D4e5F6g7H8i9J0'], ['stripe', 'sk_live_a1B2c3D4e5F6g7H8'], ['jwt', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghij1234'],
+    ['npm', '//registry.npmjs.org/:_authToken=abcd1234efgh5678'], ['json', '{"password": "hunter2hunter2"}'], ['db pass', '\nDB_PASS=hunter2hunter2'],
+    ['https url', 'https://deploy:hunter2pass@git.example.com'], ['passwd', '\nMYSQL_PASSWD=hunter2hunter2']] as const)
+    test(`${name} secrets are redacted from the appended facts`, async ($, on) => {
+      const w = world(on); await start($)
+      w.ask.value = `see ${secret} ok`
+      const { path, prompt: pr } = await pauseNotice($)
+      await write($, path, handoff(pr))
+      const text = w.files.get(path)!
+      expect(text).toContain('[redacted]')
+      expect(text).not.toMatch(/a1B2c3D4|hunter2|abcd1234efgh|eyJzdWIi/)
+    })
+
+  test('a long run of newlines redacts fast, and BYPASS_CACHE is not a secret', async ($, on) => {
+    const w = world(on); await start($)
+    w.ask.value = 'run\nBYPASS_CACHE=truevalue123' + '\n'.repeat(50000) + 'done'
+    const { path, prompt: pr } = await pauseNotice($)
+    const t = Date.now()
+    await write($, path, handoff(pr))
+    expect(Date.now() - t).toBeLessThan(100)
+    expect(w.files.get(path)).toContain('BYPASS_CACHE=truevalue123')
+  })
+
+  test('a file name git quotes (a double quote) can be named and pass', async ($, on) => {
+    const w = world(on); await start($)
+    const { path, prompt: pr } = await pauseNotice($)
+    w.status.value = ' M src/a.ts\n M src/c.ts\n?? src/b.ts\n?? "q\\"uote.ts"\n'
+    expect(ctx(await write($, path, handoff(pr)))).toContain('Name these uncommitted files and their state in "## Status" or "## Repo state": q"uote.ts.')
+    expect(ctx(await write($, path, handoff(pr, 'Also q"uote.ts')))).toContain('handoff OK')
+  })
+
+  test('a non-ASCII file name passes', async ($, on) => {
+    const w = world(on); await start($)
+    const { path, prompt: pr } = await pauseNotice($)
+    w.status.value = ' M src/a.ts\n M src/c.ts\n?? src/b.ts\n?? café.ts\n'
+    expect(ctx(await write($, path, handoff(pr, 'Also café.ts')))).toContain('handoff OK')
+  })
+
+  for (const [root, cd, ok] of [
+    ['/Users/me/Café Projects/app', "cd '/Users/me/Café Projects/app'", true],
+    ["/Users/me/Dad's Projects/app", `cd "/Users/me/Dad's Projects/app"`, true],
+    ['/Users/me/My Projects (old)/app', "cd '/Users/me/My Projects (old)/app'", true],
+    ['/Users/me/$HOME/app', 'cd "/Users/me/$HOME/app"', false],
+    ['/Users/me/$HOME/app', 'cd /Users/me/$HOME/app', false],
+    ["/Users/me/Dad's/app", "cd '/Users/me/Dad's/app'", false],
+  ] as const)
+    test(`${cd} && git status is ${ok ? 'approved' : 'refused'}`, async ($, on) => {
+      const w = world(on); w.top.value = root; await start($); await pauseNotice($)
+      expect((await $.tool.check({ tool: 'Bash', input: { command: `${cd} && git status` } } as never)).decision).toBe(ok ? 'allow' : 'ask')
+    })
+
+  test('handoff_dir slashes collapse', { options: { handoff_dir: 'a//b' } }, async ($, on) => {
+    world(on); await start($)
+    expect((await pauseNotice($)).path).toContain(`${ROOT}/a/b/`)
+  })
+
+  for (const bad of ['.git/hooks', '.claude/x', '.git', '.Git/hooks', '.CLAUDE/x', './/x'])
+    test(`handoff folder ${bad} falls back to .handoffs`, { options: { handoff_dir: bad } }, async ($, on) => {
+      world(on); await start($)
+      expect((await pauseNotice($)).path).toContain(`${ROOT}/.handoffs/`)
+    })
+
+  test('a handoff folder holding tracked files is not excluded, and its other changes are still named', { options: { handoff_dir: 'src' } }, async ($, on) => {
+    const w = world(on); w.tracked.value = 'src/a.ts'; await start($)
+    const { path, prompt: pr } = await pauseNotice($)
+    expect(w.files.get(`${ROOT}/.git/info/exclude`)).not.toContain('/src/')
+    expect(w.runs.some(c => c.endsWith('ls-files -- :(top)src'))).toBe(true)
+    w.status.value = ' M src/x.py\n?? src/\n'
+    expect(ctx(await write($, path, handoff(pr)))).toContain('"## Repo state": src/x.py.')
+  })
+
+  test('status shows the settings in use and the ones ignored', { options: { pause_at_percent_left: 150, warn_at_percent_left: 5 } }, async ($, on) => {
+    world(on); await start($)
+    const text = await status($)
+    expect(text.startsWith('State: normal')).toBe(true)
+    expect(text).toContain('Gate after 5 tool calls or 3 points. Handoff folder .handoffs. Word budget 600.')
+    expect(text).toContain('pause_at_percent_left "150" is out of range; using 8.')
+    expect(text).toContain('warn_at_percent_left 5 is not above pause_at_percent_left 8, so there is no separate warning.')
   })
 })
