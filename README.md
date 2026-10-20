@@ -39,7 +39,7 @@ Without this, Claude waits at the limit and then keeps going in the old chat, wh
 ## What happens
 
 - 15% left: nothing you can see. Claude is told to finish what it's doing and not start anything new.
-- 8% left: Claude stops and saves a note (Claude calls it a "handoff") in a `.handoffs` folder in your project. Its last message shows when your limit resets and a message to copy (the "resume prompt").
+- 8% left: Claude stops and saves the note in a `.handoffs` folder in your project. Its last message shows when your limit resets and a message to copy (the "resume prompt").
 - For the weekly limit, the same happens at 10% and 3% left.
 
 If you're in another app, you get the usual notification when Claude stops. If the limit hits before Claude finishes its note, the plugin writes a shorter one by itself.
