@@ -14,6 +14,7 @@ Claude has two usage limits: one resets every 5 hours, the other every week. Whe
 - You don't lose work halfway. Without it, Claude can hit the limit in the middle of a change and leave files half-edited, with no record of what it was doing.
 - A fresh chat uses less of your new limit. Claude's short-term memory of a chat (the "cache") runs out after an hour, so continuing the old chat after the reset makes it re-read the whole conversation at full price. A short note is much smaller.
 - The new chat starts from the right place, because the note is checked against your actual files.
+- You can pick a different model for the new chat, such as a cheaper one. The note is a plain text file any model can read. Switching models in the old chat would make the new model re-read the whole conversation at full price.
 
 The cost: Claude spends part of your last 8% writing the note, and you paste the resume prompt yourself. We haven't yet measured how much usage this saves in real use.
 
