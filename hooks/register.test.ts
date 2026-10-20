@@ -739,6 +739,25 @@ describe('snapshot accuracy', () => {
     expect(c).toContain('Repo state": lib/x.ts, café.ts.')
   })
 
+  test('two changed files with the same name each need their path', async ($, on) => {
+    const w = world(on); await start($)
+    const { path, prompt } = await pauseNotice($)
+    w.status.value = ' M src/index.ts\n M test/index.ts\n M lib/only.ts\n'
+    const c = ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt, 'Changed index.ts and only.ts') } as never))
+    expect(c).toContain('Repo state": src/index.ts, test/index.ts.')
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt, 'Changed src/index.ts, test/index.ts and only.ts') } as never))).toContain('handoff OK')
+  })
+
+  test('a changed path inside a longer one does not name it when the file name is shared', async ($, on) => {
+    const w = world(on); await start($)
+    const { path, prompt } = await pauseNotice($)
+    w.status.value = ' M index.ts\n M src/index.ts\n M lib/a.ts\n M xlib/a.ts\n'
+    const c = ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt, 'Changed src/index.ts and xlib/a.ts') } as never))
+    expect(c).toContain('Repo state": index.ts, lib/a.ts.')
+    const named = handoff(prompt, `Changed ./index.ts, src/index.ts, xlib/a.ts and ${ROOT}/lib/a.ts`)
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: named } as never))).toContain('handoff OK')
+  })
+
   test('the resume prompt says what to do when the repo differs and to stay within the Goal', async ($, on) => {
     world(on); await start($)
     const { prompt } = await pauseNotice($)

@@ -1,0 +1,11 @@
+auto-pause
+Copyright (c) 2026 Kassle. Licensed under the MIT License (see LICENSE).
+
+The secret-detection patterns in hooks/register.ts are adapted from handoff-now
+(https://github.com/talal-ai/handoff-now, src/redact.rs).
+Copyright 2026 handoff-now contributors. Licensed under the Apache License, Version 2.0;
+a copy is in licenses/Apache-2.0.txt.
+Changes: ported from Rust to TypeScript and extended with more key and password formats.
+
+The read-only git allowlist used while pausing follows the idea of handoff-now's
+freeze allowlist; the code here is written separately.

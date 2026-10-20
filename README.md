@@ -2,7 +2,7 @@
 
 A Claude Code plugin that watches your 5-hour and weekly usage. Shortly before you hit the limit, it gets Claude to stop at a safe point, write a handoff file, and give you a resume prompt to paste into a new session after the reset.
 
-Status: 0.1.4, still being tuned on real use. [PLAN.md](PLAN.md) has the design, `docs/phase*-results.md` has what was tested in each phase, [docs/competitor-review.md](docs/competitor-review.md) compares it with similar plugins, and [docs/user-testing.md](docs/user-testing.md) has the simulated-user and abuse testing.
+Status: 0.1.5, still being tuned on real use. [PLAN.md](PLAN.md) has the design, `docs/phase*-results.md` has what was tested in each phase, [docs/competitor-review.md](docs/competitor-review.md) compares it with similar plugins, and [docs/user-testing.md](docs/user-testing.md) has the simulated-user and abuse testing.
 
 ## Requirements
 
@@ -134,8 +134,8 @@ Uninstalling leaves your handoffs where they are. In each project it paused in, 
 
 - While pausing, the plugin approves two things without asking you: writing the handoff file it named, and read-only git (`status`, `diff`, `log`, `show`, `rev-parse`, `branch`) on paths inside the project. It approves no git at all in a repo whose own `.git/config` sets programs for git to run, and no handoff folder that is a link out of the project.
 - The handoff and its session facts are checked for common secret formats, which are refused or replaced with `[redacted]`. The check cannot catch everything, so read a handoff before you paste it anywhere outside your machine.
-- Like any Claude Code plugin, this one runs with your user account's permissions, and an update replaces its code. If that matters to you, install from your own reviewed copy of this repository (`claude plugin marketplace add /path/to/your/clone`) and update it only after reading the changes.
+- Like any Claude Code plugin, this one runs with your user account's permissions. Claude Code does not update plugins from marketplaces like this one on its own (auto-update is off by default for them), so new code arrives only when you run the update commands above. To read every change first, install from your own copy of this repository (`claude plugin marketplace add /path/to/your/clone`) and update that copy when you are ready.
 
 ## License
 
-MIT
+MIT. The secret patterns are adapted from [handoff-now](https://github.com/talal-ai/handoff-now) (Apache 2.0); see [NOTICE](NOTICE).

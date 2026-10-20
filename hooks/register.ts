@@ -13,7 +13,7 @@ type Calibration = { at: string; kind: Kind; usedAtNotice: number; usedAtDone: n
 
 const LABEL: Record<Kind, string> = { five_hour: '5-hour', seven_day: '7-day' }
 const REQUIRED = ['Goal', 'Status', 'Next steps', 'Repo state']
-// Merged from handoff-now's redaction list plus common provider prefixes.
+// Adapted from handoff-now's redaction list (Apache-2.0, see NOTICE) plus common provider prefixes.
 const SECRETS = [
   /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/, // through the body, so redaction takes it all
   /sk-ant-[A-Za-z0-9_-]{20,}/,
@@ -67,9 +67,15 @@ const MAX_DIRTY = 15 // more uncommitted files than this is a bulk change; don't
 const redact = (s: string) => SECRETS.reduce((t, re) => t.replace(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g'), '[redacted]'), s)
 const flat = (s: string) => s.replace(/\s+/g, ' ').trim()
 // Paths from `git status --porcelain` (always repo-relative), handoffs and renames' old names left out.
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 // A path counts as named when it appears whole, or its file name does without a longer name around it (a.ts, not data.ts).
-const mentions = (text: string, f: string) => text.includes(f) ||
-  new RegExp(`(?:^|[^\\w.-])${f.split('/').pop()!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'm').test(text)
+// When another changed file has the same name (index.ts, src/index.ts, test/index.ts) only the whole path counts, and
+// not inside a longer one; `text` has the project root stripped so absolute mentions count too.
+const mentions = (text: string, f: string, dirty: string[] = []) => {
+  const name = f.split('/').pop()!
+  if (!dirty.some(o => o !== f && o.split('/').pop() === name)) return text.includes(f) || new RegExp(`(?:^|[^\\w.-])${esc(name)}(?![\\w-])`, 'm').test(text)
+  return new RegExp(`(?:^|[^\\w./-])(?:\\./)?${esc(f)}(?![\\w-])`, 'm').test(text)
+}
 // With core.quotePath=false git quotes only names holding a quote, backslash or control character, C-style.
 const unquote = (p: string) => /^".*"$/.test(p) ? p.slice(1, -1).replace(/\\(["\\tnr]|[0-7]{3})/g, (_, c: string) => ({ t: '\t', n: '\n', r: '\r' } as Record<string, string>)[c] ?? (c.length === 3 ? String.fromCharCode(parseInt(c, 8)) : c)) : p
 const dirtyPaths = (porcelain: string) =>
@@ -299,7 +305,7 @@ async function excludeDir($: $, exclude: string, root: string) {
 
 // `want` is the resume prompt this file must carry: the notice's while pausing, else the one built for its own path
 // (a prompt copied from an older handoff, or typed from memory, points the next session at the wrong file or skips the HEAD check).
-function validate(full: string, want: string, headNow = '', dirty: string[] = [], p?: typeof pause) {
+function validate(full: string, want: string, headNow = '', dirty: string[] = [], p?: typeof pause, root = '') {
   const problems: string[] = []
   const text = full.split(FACTS)[0]!
   const top = text.split('\n').slice(0, 25).join('\n')
@@ -322,7 +328,7 @@ function validate(full: string, want: string, headNow = '', dirty: string[] = []
   const heads = [p?.head, headNow].filter((h): h is string => !!h)
   if (heads.length && repo && !heads.some(h => (repo[1] ?? '').includes(h))) problems.push(`"## Repo state" must name HEAD ${headNow || heads[0]}, the commit this handoff was written at.`)
   // A file left out here is work the next session never hears about (often one edited during the grace calls).
-  const missing = dirty.length <= MAX_DIRTY ? dirty.filter(f => !mentions(text, f)) : []
+  const missing = dirty.length <= MAX_DIRTY ? dirty.filter(f => !mentions(root ? text.split(`${root}/`).join('') : text, f, dirty)) : []
   if (missing.length) problems.push(`Name these uncommitted files and their state in "## Status" or "## Repo state": ${missing.join(', ')}.`)
   if (SECRETS.some(re => re.test(text))) problems.push('Remove the secret-looking string (key, token, password, or private key).')
   return problems
@@ -501,7 +507,7 @@ export const register: Register = (on, options) => {
       const root = p?.root ?? (await git($, 'rev-parse', '--show-toplevel'))
       const abs = String(file).startsWith('/') ? String(file) : `${await $.session.cwd()}/${file}`
       const want = p?.prompt ?? resumePrompt(root || (await $.session.cwd()), abs, !!root)
-      const problems = text === undefined ? [] : validate(text, want, (p ? p.head : root) ? await git($, 'rev-parse', '--short', 'HEAD') : '', root ? dirtyPaths(await git($, '-c', 'core.quotePath=false', 'status', '--porcelain')) : [], p)
+      const problems = text === undefined ? [] : validate(text, want, (p ? p.head : root) ? await git($, 'rev-parse', '--short', 'HEAD') : '', root ? dirtyPaths(await git($, '-c', 'core.quotePath=false', 'status', '--porcelain')) : [], p, root)
       if (text !== undefined && !(await inside($, abs, root || (await $.session.cwd())))) {
         context.push(`AUTO-PAUSE: ${file} leads outside the project, so it was not checked or extended. Write handoffs to a regular file in ${root || (await $.session.cwd())}/${cfg.dir}.`)
       } else if (text !== undefined && !problems.length) {

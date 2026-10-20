@@ -92,18 +92,19 @@ Each fix has a test in hooks/register.test.ts (77 tests before, 123 now). The fa
 ## Publisher audit (read-only)
 
 - Every human commit is by `RK <rk@m2.local>`, which links the k45sle handle to a machine name. Nothing else personal is in the history: no home paths, emails, tokens, transcripts or handoffs (`.handoffs/` and `evals/results/` were never committed). Changing the identity needs a history rewrite and force-push before the repo goes public; not done.
-- register.ts credits handoff-now for the redaction list and the read-only git rule. Its license is not recorded here and could not be found.
+- register.ts credits handoff-now for the redaction list and the read-only git rule, with no license recorded. It is talal-ai/handoff-now, Apache 2.0, and our env-variable pattern is nearly its own. 0.1.5 adds a NOTICE file and the Apache 2.0 text in `licenses/`; the git allowlist is separate code that follows the same idea.
 - The install copies the whole repo, including PLAN.md, docs/ and evals/, about 390 KB that is not needed at runtime.
-- A malicious update runs as the user. The mod API has process.run and spawn, file read and write on any absolute path, http.fetch, env get and set, the session transcript, and tool.check approval of tool calls. The marketplace entry points at the default branch with no pinned commit or tag, so anyone who can push controls every user's next update. Nothing in the repo limits that; the README now says how to install from a reviewed clone.
+- A malicious update runs as the user. The mod API has process.run and spawn, file read and write on any absolute path, http.fetch, env get and set, the session transcript, and tool.check approval of tool calls. The marketplace entry points at the default branch with no pinned commit or tag, so anyone who can push controls every user's next update. What limits it: Claude Code leaves auto-update off by default for third-party marketplaces, so users get new code only when they run the update command, and only the owner account has push access (checked with the GitHub API on 2026-10-20). The rest depends on that account's security. The README says how to install from a reviewed clone.
 - README claims with no test: the weekly warn default, the organization-managed Stop hooks, the Desktop notification, and the prompt-cache cost argument. The no-data toast now has one.
 
 Not changed:
 
 - A repo with a hostile `.git/config` can still make the mod's own `git status` run a filter driver. Claude Code and the user's shell already run `git status` there, so the plugin adds no exposure, and `git clone` cannot set `.git/config`.
-- Two manual handoffs with the same slug in the same minute, in two sessions, still share a facts.sh path.
-- A file name alone counts as naming a file, so two same-named files in different folders pass with one mention.
-- After a subagent is stopped, the parent may redo its remaining work inside the grace calls.
-- Any Bash command that mentions the facts.sh path gets the usage line appended, even `cat` or `grep`. Harmless.
+- Two manual handoffs with the same slug in the same minute, in two sessions, still share a facts.sh path. Both sessions would have to be asked for a handoff of the same task in the same minute; reserving the name by creating the file would make Claude Code refuse the later Write (the two-session run showed it: "File has not been read yet").
+- After a subagent is stopped, the parent may redo its remaining work inside the grace calls. That is what the grace calls are for (finish the step in progress), and they stay capped at 5 calls or 3 points.
+- Any Bash command that mentions the facts.sh path gets the usage line appended, even `cat` or `grep`. Harmless: the line is only usage figures, and only commands that name the script get it.
+
+Fixed in 0.1.5: a file name alone counted as naming a changed file, so `src/index.ts` and `test/index.ts` passed with one mention of `index.ts`. When two changed files share a name, each now needs its path.
 
 ## Checks
 
