@@ -1,6 +1,6 @@
 {
   "name": "auto-pause",
-  "version": "0.0.5",
+  "version": "0.0.8",
   "description": "Pauses Claude Code at a safe point before the usage limit and writes a handoff with a ready-to-paste resume prompt.",
   "author": {
     "name": "Kassle",
@@ -19,37 +19,37 @@
     "warn_at_percent_left": {
       "type": "number",
       "title": "Warn at % left",
-      "description": "5-hour window: warn when this much is left.",
+      "description": "5-hour limit: warn Claude when this percentage is left (0-100). Keep it above the pause value.",
       "default": 15
     },
     "pause_at_percent_left": {
       "type": "number",
       "title": "Pause at % left",
-      "description": "5-hour window: pause and write a handoff when this much is left.",
+      "description": "5-hour limit: pause and write a handoff when this percentage is left (0-100). 8 means at 92% used.",
       "default": 8
     },
     "gate_after_tool_calls": {
       "type": "number",
       "title": "Gate after tool calls",
-      "description": "Tool calls allowed after the pause notice before non-handoff tools are refused.",
+      "description": "After the pause notice, Claude gets this many tool calls to finish or undo its current step before other tools are blocked (0-1000).",
       "default": 5
     },
     "gate_after_points": {
       "type": "number",
-      "title": "Gate after points",
-      "description": "Usage points allowed after the pause notice before non-handoff tools are refused.",
+      "title": "Gate after % used",
+      "description": "After the pause notice, block other tools once usage rises by this many percent, even if tool calls remain (1-100).",
       "default": 3
     },
     "weekly_warn_at_percent_left": {
       "type": "number",
       "title": "Weekly warn at % left",
-      "description": "7-day window: warn when this much is left.",
+      "description": "7-day limit: warn Claude when this percentage is left (0-100).",
       "default": 10
     },
     "weekly_pause_at_percent_left": {
       "type": "number",
       "title": "Weekly pause at % left",
-      "description": "7-day window: pause when this much is left.",
+      "description": "7-day limit: pause and write a handoff when this percentage is left (0-100).",
       "default": 3
     },
     "handoff_dir": {
@@ -61,7 +61,7 @@
     "handoff_word_budget": {
       "type": "number",
       "title": "Handoff word budget",
-      "description": "Target handoff length in words; over 1.2x this is flagged.",
+      "description": "Target handoff length in words (100-10000). A handoff over 1.2 times this is sent back to be shortened.",
       "default": 600
     }
   }

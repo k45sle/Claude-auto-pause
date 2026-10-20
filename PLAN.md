@@ -172,7 +172,7 @@ Each turn re-reads the (cached) context, so minimize turns after the pause notic
 
 **Target: ≤ 3 turns after the safe point.** Phase 3 compared "invoke skill" against "template inlined in the notice": inline saved 1–2 turns but cost the same and wrote worse handoffs, so the notice keeps pointing to the skill ([Phase 3](docs/phase3-results.md)).
 
-Rules: never switch model for the handoff (a model switch re-reads the whole history uncached). Skill `allowed-tools` pre-approves writes to the handoff dir, so nothing stalls on a Desktop permission prompt while you're away. If that rule syntax doesn't cover it, a narrow `tool.check` allow in the mod is the fallback.
+Rules: never switch model for the handoff (a model switch re-reads the whole history uncached). While pausing, the mod's `tool.check` approves exactly the handoff write and read-only git, so nothing stalls on a Desktop permission prompt while you're away. The skill has no `allowed-tools`: wider rules matched writes anywhere and `bash -c` (2026-10-20 security review), and with any `allowed-tools` Claude Code 2.1.303 does not load the skill in acceptEdits mode ("Execute skill" with no content).
 
 ### Handoff validation (in the mod, on Write/Edit under `handoff_dir`)
 
@@ -243,13 +243,12 @@ PLAN.md
 ---
 name: writing-handoffs
 description: Writes a compact handoff document and a ready-to-paste resume prompt that let a fresh Claude Code session resume the current task without the old conversation. Use when an AUTO-PAUSE notice says the usage-limit pause threshold was reached, or when the user asks to write a handoff, wrap up for a new session, save progress before the usage limit, pause here, or hand off to a fresh session. Do not use for summarizing finished work, changelogs, commit messages, or PR descriptions.
-allowed-tools: Read Write Edit Bash(git status:*) Bash(git diff:*) Bash(git log:*) Bash(bash *writing-handoffs/scripts/facts.sh*)
 metadata:
   version: 0.1.0
 ---
 ```
 
-(Phase 0 tightens `allowed-tools` to paths under the handoff dir if the rule syntax supports it.)
+(Removed on 2026-10-20: the mod's `tool.check` does the approving on the auto path; on the manual path the user is present to approve.)
 
 **Body outline** (target ≤ 120 lines, well under both limits):
 
@@ -336,7 +335,7 @@ Phase results: [Phase 0](docs/phase0-results.md), [Phase 1](docs/phase1-results.
 | Figures lag usage from claude.ai chat in parallel | They refresh on this session's next API response, which is when the check runs anyway. The warn margin absorbs the lag. |
 | The handoff costs more than the margin on Pro with huge context | Turn budget ≤ 3, gate, calibration log, retune threshold |
 | Gate leaves code half-edited | Edits stay allowed during grace. The skill rule "record exact file:line state if you can't finish". The gate never touches your prompts. |
-| Permission prompt stalls the handoff while you're away | Skill `allowed-tools`, or a narrow `tool.check` allow for the handoff dir only |
+| Permission prompt stalls the handoff while you're away | The mod's `tool.check` allows the exact handoff path and read-only git while pausing (skill `allowed-tools` dropped: it stops the skill loading in acceptEdits mode) |
 | Stop-block loop burns usage | Block at most once per pause (check `stop_hook_active`). Claude Code's own 8-continuation cap is a backstop. |
 | Built-in auto-continue spends the fresh window on the old session | Recommended `autoContinueAtUsageLimit: false` (§3) |
 | Resume prompt pasted in the wrong folder | Absolute project and handoff paths in the prompt, plus the `git status` check as its first step |

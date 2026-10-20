@@ -2,35 +2,16 @@
 
 A Claude Code plugin that watches your 5-hour and weekly usage. Shortly before you hit the limit, it gets Claude to stop at a safe point, write a handoff file, and give you a resume prompt to paste into a new session after the reset.
 
-Status: in development (pre-0.1.0). [PLAN.md](PLAN.md) has the design, `docs/phase*-results.md` has what was tested in each phase, and [docs/competitor-review.md](docs/competitor-review.md) compares it with similar plugins.
-
-## What it does
-
-1. At 15% left in the 5-hour window (10% weekly) it adds a warning to the next tool result.
-2. At 8% left (3% weekly) it tells Claude to finish or revert the current step and write a handoff to an exact path in `.handoffs/`. That path and a resume prompt with absolute paths are in the notice. Subagents are told to return, and new ones are refused.
-3. After 5 more tool calls, or 3 more usage points, every tool is refused except the handoff, reads, and read-only git.
-4. When Claude writes the handoff, the plugin checks it: the resume prompt is there verbatim, the required sections exist, the current commit and every uncommitted file are named, it fits the word budget, and nothing looks like a secret. A valid handoff opens the gate and Claude ends its turn with the resume prompt.
-5. Once the handoff passes, the plugin adds a "Session facts" section at the end: your last few messages, word for word, and the files Claude edited. It reads these from the session, so no model call is spent, and the next session works from what you asked for rather than Claude's summary of it.
-6. If Claude ends the turn twice without a valid handoff, or the limit hits first, the plugin writes a facts-only handoff itself (last request, edited files, branch, commit, uncommitted files) and sends a desktop notification. This needs no model call.
-
-The resume prompt tells the new session to compare `git status` and the current commit with the handoff and tell you before editing if they differ. It also tells it to ask you before doing anything outside the handoff's Goal.
-
-The pause is saved per session, so `/reload-plugins` or a plugin update mid-pause keeps it. After three failed checks the gate opens anyway, so a session never stays locked.
-
-`/auto-pause-status` shows the state, the latest resume prompt for this folder, and the calibration log (outcome and usage cost of each pause). `/auto-pause-status release` opens the gate by hand and logs it as an override.
-
-## Why
-
-With `autoContinueAtUsageLimit` on (the default), Claude Code waits at the limit and then continues the same session. By then the one-hour prompt cache has expired, so the first turn after the reset sends the whole old conversation again, uncached. Writing a handoff while the cache is still warm and starting fresh is cheaper.
+Status: in development (pre-0.1.0). [PLAN.md](PLAN.md) has the design, `docs/phase*-results.md` has what was tested in each phase, [docs/competitor-review.md](docs/competitor-review.md) compares it with similar plugins, and [docs/user-testing.md](docs/user-testing.md) has the simulated-user and abuse testing.
 
 ## Requirements
 
-- Claude Code 2.1.299 or later: the terminal CLI, the Code tab of the Claude Desktop app (local sessions), or VS Code
-- A Claude Pro or Max plan. The usage figures come from the subscription, so API-key and Team/Enterprise seats get no data.
+- Claude Code 2.1.299 or later: the Code tab of the Claude Desktop app (local sessions), the terminal, or VS Code. All three share one install.
+- A Claude Pro or Max plan. The usage figures come from your subscription, so API keys and Team or Enterprise seats get no data and the plugin stays idle.
 
 ## Install
 
-In a terminal:
+Type these two commands into the Terminal app (on a Mac: press Cmd+Space, type "Terminal", press Return). They do not go into a Claude chat.
 
 ```bash
 claude plugin marketplace add k45sle/Claude-auto-pause
@@ -40,38 +21,76 @@ claude plugin marketplace add k45sle/Claude-auto-pause
 claude plugin install auto-pause@k45sle --scope user
 ```
 
-In the Desktop app you can instead open **+ → Add plugins** in a Code session after adding the marketplace, and install `auto-pause` at User scope.
+Then quit and reopen the Claude Desktop app (or start a new `claude` in the terminal).
+
+To check that it works, type `/auto-pause-status` in a Code session. You should see `auto-pause: normal` and the warn and pause points. "No usage data yet" is normal until Claude has answered once.
+
+## What you will see
+
+- At 15% of your 5-hour limit left, nothing visible happens. Claude gets a note to finish its current step rather than start new work.
+- At 8% left, Claude stops at a safe point and writes a handoff file into a `.handoffs` folder in your project. Its last message gives the file's location, when your usage resets, and a resume prompt in a box you can copy.
+- If you are in another app, the Desktop app sends its usual notification when Claude finishes.
+
+The handoff is a short Markdown file: the goal, what is done, what is left, the next steps, and the state of your files. The plugin checks it before Claude can finish: the resume prompt must point at the right file, and every file you have changed must be listed (up to 15 of them).
+
+## Resume after the reset
+
+1. Open a new Code session in the same project folder.
+2. Paste the resume prompt and press Return.
+
+The new session reads the handoff, checks that your files still match it, and starts on the next step. If you lose the prompt, type `/auto-pause-status` in that project; it shows the latest one again.
 
 ## Settings
 
 | Setting | Default | What it does |
 |---|---|---|
-| `pause_at_percent_left` | 8 | Pause and write a handoff when this much of the 5-hour window is left (8 means at 92% used) |
-| `warn_at_percent_left` | 15 | Warn Claude to wrap up the current step at this much left |
-| `weekly_pause_at_percent_left` | 3 | The same pause for the 7-day window |
-| `weekly_warn_at_percent_left` | 10 | The same warning for the 7-day window |
-| `gate_after_tool_calls` | 5 | Tool calls Claude gets after the pause notice to finish or revert its step |
-| `gate_after_points` | 3 | Usage points Claude gets after the pause notice, whichever runs out first |
-| `handoff_dir` | `.handoffs` | Folder for handoffs, relative to the project, using letters, digits, `.`, `_`, `-` and `/`. Anything else is ignored and `.handoffs` is used |
-| `handoff_word_budget` | 600 | Target handoff length; over 1.2 times this is sent back to be cut |
+| `pause_at_percent_left` | 8 | Pause and write a handoff when this much of the 5-hour limit is left (8 means at 92% used) |
+| `warn_at_percent_left` | 15 | Tell Claude to wrap up its current step at this much left |
+| `weekly_pause_at_percent_left` | 3 | The same pause for the 7-day limit |
+| `weekly_warn_at_percent_left` | 10 | The same warning for the 7-day limit |
+| `gate_after_tool_calls` | 5 | Tool calls Claude gets after the pause notice to finish or undo its current step |
+| `gate_after_points` | 3 | How many more percent of usage Claude may spend after the pause notice, if it runs out before the tool calls do |
+| `handoff_dir` | `.handoffs` | Folder for handoffs, inside the project, using letters, digits, `.`, `_`, `-` and `/` |
+| `handoff_word_budget` | 600 | Target handoff length in words |
 
-To change one, run `/plugin configure auto-pause@k45sle` in a Claude Code session, or from a terminal:
+A value out of range (a percentage above 100, for example) is ignored and the default is used.
+
+To change a setting, type `/plugin configure auto-pause@k45sle` in a Claude Code session. Or, in the Terminal app (the value goes in quotes):
 
 ```bash
-echo '{"pause_at_percent_left": 10}' | claude plugin configure auto-pause@k45sle --values-stdin
+echo '{"pause_at_percent_left": "10"}' | claude plugin configure auto-pause@k45sle --values-stdin
 ```
 
-Restart Claude Code (or the Desktop app) afterwards. `/auto-pause-status` shows the thresholds in use.
+Then restart the Desktop app. `/auto-pause-status` shows the values in use.
 
 ## Recommended setting
 
-Since you resume by hand, turn off the built-in auto-continue in `~/.claude/settings.json`:
+By default, Claude Code waits at the limit and then carries on in the same session. Since you resume by hand in a new session, turn that off. Ask Claude in any session: "Set autoContinueAtUsageLimit to false in my user settings." Or add this line to `~/.claude/settings.json` yourself:
 
 ```json
 { "autoContinueAtUsageLimit": false }
 ```
 
-The trade-off: if the limit hits before Claude writes the handoff, you get only the facts-only handoff. Go back to the old session after the reset and ask it to finish the handoff, or start from the facts-only one.
+If the limit arrives before Claude has written the handoff, the plugin writes a shorter one from what it can read on its own. After the reset you can start from that one, or go back to the old session and ask it to finish the handoff.
+
+## How it works
+
+1. At 15% left in the 5-hour window (10% weekly) it adds a warning to the next tool result.
+2. At 8% left (3% weekly) it tells Claude to finish or revert the current step and write a handoff to an exact path in `.handoffs/`. That path and a resume prompt with absolute paths are in the notice. Subagents are told to return, and new ones are refused.
+3. After 5 more tool calls, or once usage rises 3 more percent, every tool is blocked except writing the handoff and a few reads (Read, Grep, Glob, read-only git).
+4. When Claude writes the handoff, the plugin checks it: the resume prompt is there verbatim, the required sections exist, the current commit and every uncommitted file are named, it fits the word budget, and nothing looks like a secret. A valid handoff unblocks the tools and Claude ends its turn with the resume prompt.
+5. Once the handoff passes, the plugin adds a "Session facts" section at the end: your last few messages, word for word, and the files Claude edited. It reads these from the session, so no model call is spent, and the next session works from what you asked for rather than Claude's summary of it.
+6. If Claude ends the turn twice without a valid handoff, or the limit hits first, the plugin writes a short handoff itself from what it can read without Claude (last request, edited files, branch, commit, uncommitted files) and sends a desktop notification. This needs no model call.
+
+The resume prompt tells the new session to compare `git status` and the current commit with the handoff and tell you before editing if they differ. It also tells it to ask you before doing anything outside the handoff's Goal.
+
+The pause is saved per session, so `/reload-plugins` or a plugin update mid-pause keeps it. After three failed checks the tools are unblocked anyway, so a session never stays locked.
+
+`/auto-pause-status` shows the state, the latest resume prompt for this folder, and a log of past pauses (how each ended and how much usage the handoff took). `/auto-pause-status release` unblocks the tools by hand and records that you did.
+
+## Why
+
+With `autoContinueAtUsageLimit` on (the default), Claude Code waits at the limit and then continues the same session. By then the one-hour prompt cache has expired, so the first turn after the reset sends the whole old conversation again, uncached. Writing a handoff while the cache is still warm and starting fresh is cheaper.
 
 ## Limitations
 
@@ -80,6 +99,8 @@ The trade-off: if the limit hits before Claude writes the handoff, you get only 
 - On Claude Code installs managed by an organization, the Stop and StopFailure hooks run only if the organization lists the plugin, so the end-of-turn block and the facts-only handoff are off there.
 
 ## Uninstall
+
+In the Terminal app:
 
 ```bash
 claude plugin uninstall auto-pause@k45sle --scope user

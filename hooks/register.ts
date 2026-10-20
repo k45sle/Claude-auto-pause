@@ -26,9 +26,28 @@ const SECRETS = [
   /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp):\/\/[^\s:@/]+:[^\s@/]+@/i,
   /^\s*(?:export\s+)?[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)[A-Z0-9_]*\s*=\s*['"]?[^\s'"$<{]{8,}/m,
 ]
-// Read-only git with no shell operators: what the handoff's Repo state needs (handoff-now's rule).
-// `branch` only lists; `--output`, `--ext-diff` and `--textconv` would write files or run programs.
-const SAFE_GIT = /^git\s+(?:(?:status|diff|log|show|rev-parse)(?![^\n]*--(?:output|ext-diff|textconv))(?:\s[^;&|<>`$\n\\]*)?|branch(?:\s+(?:--show-current|-a|-r|-vv?|--list))*)$/
+// Read-only git: what the handoff's Repo state needs (handoff-now's rule). An allowlist, not a
+// denylist: plain characters only (no quotes, braces, globs, $, pipes, redirects or line breaks),
+// so a flag cannot be spelled around the check. `--output`, `--ext-diff` and `--textconv` (and their
+// prefixes) would write files or run programs; `branch` only lists.
+const PLAIN = /^[\w ./:=@%+,~^-]+$/
+const isSafeGit = (cmd: string) => {
+  if (!PLAIN.test(cmd)) return false
+  const [bin, sub, ...args] = cmd.split(/\s+/)
+  if (bin !== 'git') return false
+  if (sub === 'branch') return args.every(a => ['--show-current', '-a', '-r', '-v', '-vv', '--list'].includes(a))
+  // --no-index and -O read files outside the repo.
+  return ['status', 'diff', 'log', 'show', 'rev-parse'].includes(sub ?? '') && !args.some(a => /^--(?:out|ext|text|no-index)|^-O/.test(a))
+}
+// Claude chains these (`cd <root> && git status && git diff`); each part must pass on its own.
+// `cd` only into the project: another folder's .git/config could make `git status` run a program.
+const isSafeShell = (cmd: string, root?: string) => !/[\n\r]/.test(cmd) &&
+  cmd.split(/\s*(?:&&|;)\s*/).every(p => {
+    const cd = /^cd\s+(?:"([^"]*)"|'([^']*)'|(\S+))$/.exec(p)
+    // A root with $, backticks or quotes in its name would be expanded by bash after this check.
+    return cd ? !!root && PLAIN.test(root) && (cd[1] ?? cd[2] ?? cd[3])!.replace(/\/+$/, '') === root : isSafeGit(p)
+  })
+const MAX_RESCUES = 10 // reads and git while gated: enough for an accurate handoff, not a way to keep working
 const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'TodoWrite'])
 const MAX_FIXES = 3
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit'])
@@ -51,15 +70,20 @@ const dirtyPaths = (porcelain: string) =>
 let cfg = config({})
 
 function config(o: Record<string, unknown>) {
-  const num = (k: string, d: number) => (o[k] !== undefined && o[k] !== '' && Number.isFinite(Number(o[k])) ? Number(o[k]) : d)
+  // A value that is missing, not a number, or out of range falls back to the default.
+  const num = (k: string, d: number, min = 0, max = 100) => {
+    const raw = typeof o[k] === 'string' ? (o[k] as string).trim() : o[k]
+    const v = raw === undefined || raw === null || raw === '' ? NaN : Number(raw)
+    return Number.isFinite(v) && v >= min && v <= max ? v : d
+  }
   return {
     warn: { five_hour: num('warn_at_percent_left', 15), seven_day: num('weekly_warn_at_percent_left', 10) },
     pause: { five_hour: num('pause_at_percent_left', 8), seven_day: num('weekly_pause_at_percent_left', 3) },
-    gateCalls: num('gate_after_tool_calls', 5),
-    gatePoints: num('gate_after_points', 3),
+    gateCalls: num('gate_after_tool_calls', 5, 0, 1000),
+    gatePoints: num('gate_after_points', 3, 1),
     // Relative to the project root, plain characters only; anything else falls back (facts.sh applies the same rule).
     dir: ((d: string) => (/^[\w.-][\w./-]*$/.test(d) && !d.includes('..') && d !== '.' ? d : '.handoffs'))(String(o.handoff_dir ?? '').trim().replace(/^\.\//, '').replace(/\/+$/, '')),
-    words: num('handoff_word_budget', 600),
+    words: num('handoff_word_budget', 600, 100, 10000),
   }
 }
 
@@ -72,7 +96,7 @@ let contextTokens: number | undefined
 const windows = new Map<Kind, { key: string; used: number; resetsAt?: string; fired: Set<'warn' | 'pause'> }>()
 let pending: string | undefined
 let owner: Kind | undefined // the window behind the current warn or pause
-let pause: { kind: Kind; usedAtNotice: number; calls: number; root: string; path: string; prompt: string; notice: string; stopBlocked: boolean; head?: string; fixes?: number; denials?: number } | undefined
+let pause: { kind: Kind; usedAtNotice: number; calls: number; root: string; path: string; prompt: string; notice: string; stopBlocked: boolean; head?: string; fixes?: number; denials?: number; rescues?: number; outside?: boolean } | undefined
 let storeKey: string | undefined // `session:<id>`, set at session.start
 
 // Saved after every change so a /reload-plugins (Desktop reloads every open session) keeps a pause.
@@ -123,7 +147,7 @@ const isHandoffCall = (e: { tool: string; [k: string]: unknown }) =>
     : (FILE_TOOLS.has(e.tool) || e.tool === 'Read') && isPauseFile(e.file_path)
 // What the gate lets through besides the handoff: reads and read-only git, so the handoff can be accurate.
 const isRescueCall = (e: { tool: string; [k: string]: unknown }) =>
-  READ_TOOLS.has(String(e.tool)) || (e.tool === 'Bash' && SAFE_GIT.test(String(e.command ?? '').trim()))
+  READ_TOOLS.has(String(e.tool)) || (e.tool === 'Bash' && isSafeShell(String(e.command ?? '').trim(), pause?.root))
 
 async function onReading($: $, rateLimits: readonly SessionRateLimit[]) {
   const now = await $.clock.now()
@@ -198,9 +222,15 @@ async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {
     check = 'Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.'
     await excludeDir($, await git($, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'), root)
   }
+  // A handoff folder that resolves outside the project (a symlink shipped in the repo) is never auto-approved.
+  // Stat without resolving sees a link even when it leads nowhere; such a folder counts as outside too.
+  const rootReal = (await $.fs.stat(root, { resolve: true }).catch(() => undefined))?.realPath
+  const here = await $.fs.stat(dir).catch(() => undefined)
+  const dirReal = here && (await $.fs.stat(dir, { resolve: true }).catch(() => undefined))?.realPath
+  const outside = here !== undefined && (dirReal === undefined || rootReal === undefined || !dirReal.startsWith(`${rootReal}/`))
   const prompt = `Resume paused work in ${root}.\nRead ${path} first. It is your only context from the previous session.\n${check}\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.`
   const notice = [
-    `AUTO-PAUSE: pause threshold reached. ${usage(kind, used, resetsAt)}`,
+    `AUTO-PAUSE: pause threshold reached. ${usage(kind, used, resetsAt)} (This comes from the auto-pause plugin the user installed to save work before the usage limit.)`,
     `Do not start new work. Finish or revert the step in progress (at most ${cfg.gateCalls} more tool calls), then use the writing-handoffs skill and write exactly the handoff path below.`,
     `Handoff path: ${path}`,
     `Repo state: ${repo}`,
@@ -208,17 +238,19 @@ async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {
     prompt,
   ].join('\n')
   phase = 'pausing'
-  pause = { kind, usedAtNotice: used, calls: 0, root, path, prompt, notice, stopBlocked: false, head, fixes: 0, denials: 0 }
+  pause = { kind, usedAtNotice: used, calls: 0, root, path, prompt, notice, stopBlocked: false, head, fixes: 0, denials: 0, rescues: 0, outside }
   pending = notice
 }
 
 // Keep handoffs out of commits without touching tracked files.
 async function excludeDir($: $, exclude: string, root: string) {
-  if (!exclude) return
+  // Old git echoes the unknown --path-format flag back: accept only one clean line.
+  if (!exclude || exclude.includes('\n') || exclude.startsWith('-')) return
   const file = exclude.startsWith('/') ? exclude : `${root}/${exclude}`
   const line = `/${cfg.dir}/`
-  const text = await $.fs.read(file).catch(() => '')
-  if (text.split('\n').includes(line)) return
+  // Never rewrite a file that exists but could not be read: that would drop the user's excludes.
+  const text = (await $.fs.exists(file).catch(() => false)) ? await $.fs.read(file).catch(() => undefined) : ''
+  if (text === undefined || text.split('\n').includes(line)) return
   await $.fs.write(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`).catch(() => {})
 }
 
@@ -382,8 +414,8 @@ export const register: Register = (on, options) => {
     if (active && AGENT_TOOLS.has(e.tool)) return refuse('AUTO-PAUSE: no new subagents while pausing. Write the handoff instead.')
     if (active && !handoff) {
       if (phase === 'pausing' && pause!.calls >= cfg.gateCalls) phase = 'gated'
-      if (phase === 'gated' && !isRescueCall(e as never)) {
-        return refuse(`AUTO-PAUSE gate: only the handoff is allowed now (plus Read, Grep, Glob and read-only git). Use the writing-handoffs skill and write ${pause!.path}.\n${pause!.notice}`)
+      if (phase === 'gated' && (!isRescueCall(e as never) || (pause!.rescues = (pause!.rescues ?? 0) + 1) > MAX_RESCUES)) {
+        return refuse(`AUTO-PAUSE gate (from the auto-pause plugin the user installed): only the handoff is allowed now, plus a few reads (Read, Grep, Glob, read-only git without pipes or quotes; use Read, not cat). Use the writing-handoffs skill and write ${pause!.path}.\n${pause!.notice}`)
       }
       pause!.calls++
     }
@@ -414,13 +446,15 @@ export const register: Register = (on, options) => {
     return context.length ? { ...r, context: [...(r.context ?? []), ...context] } : r
   }).catch(($, e, next) => next(e)) // fail open: a mod bug must never brick a session
 
-  // Let the handoff go through without a permission prompt while the user is away.
-  on('tool.check', ($, e, next) =>
-    (phase === 'pausing' || phase === 'gated') && e.agentId === undefined &&
-    isHandoffCall({ tool: e.tool, ...(e.input as Record<string, unknown>) })
-      ? { decision: 'allow', reason: 'auto-pause: handoff while pausing' }
-      : next(e),
-  ).catch(($, e, next) => next(e))
+  // Let the handoff and read-only git go through without a permission prompt while the user is away.
+  // The real tool name goes last, so an input field called `tool` cannot pass for the handoff.
+  on('tool.check', ($, e, next) => {
+    const x: { tool: string; [k: string]: unknown } = { ...(e.input as Record<string, unknown>), tool: e.tool }
+    return (phase === 'pausing' || phase === 'gated') && e.agentId === undefined && !pause?.outside &&
+      (isHandoffCall(x) || (x.tool === 'Bash' && isSafeShell(String(x.command ?? '').trim(), pause?.root)))
+      ? { decision: 'allow', reason: 'auto-pause: handoff or read-only git while pausing' }
+      : next(e)
+  }).catch(($, e, next) => next(e))
 
   // If Claude ends the turn before the handoff, send it back once.
   // A second end without a valid handoff gets the facts-only one, so the turn can always end.
@@ -469,6 +503,7 @@ export const register: Register = (on, options) => {
     if (!hasData) lines.push('No usage data yet (it arrives after the first response; never on API keys or Team plans).')
     lines.push(`Thresholds: warn at ${cfg.warn.five_hour}% left, pause at ${cfg.pause.five_hour}% left (weekly ${cfg.warn.seven_day}/${cfg.pause.seven_day}).`)
     if (last) lines.push('', `Latest handoff for ${root} (${last.at}): ${last.path}`, 'Resume prompt:', '```text', last.prompt, '```')
+    else if (phase === 'normal') lines.push('', 'Nothing to do yet. When usage reaches the pause point, Claude writes a handoff and this shows its resume prompt.')
     if (log.length) {
       // Only checked handoffs measure what a handoff costs; the rest are counted as outcomes.
       const costs = log.filter(c => (c.outcome ?? 'verified') === 'verified').map(c => c.usedAtDone - c.usedAtNotice).sort((a, b) => a - b)

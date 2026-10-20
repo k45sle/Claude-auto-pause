@@ -5,7 +5,7 @@ const ROOT = '/Users/me/My Projects/app'
 const RESETS = '2026-10-19T22:00:00.000Z'
 const NEXT_RESETS = '2026-10-20T03:00:00.000Z'
 
-type World = { files: Map<string, string>; calls: string[]; notes: string[]; store: Map<string, unknown>; head: { value: string }; ask: { value: string }; id: { value: string }; status: { value: string } }
+type World = { files: Map<string, string>; calls: string[]; notes: string[]; store: Map<string, unknown>; head: { value: string }; ask: { value: string }; id: { value: string }; status: { value: string }; exclude: { value: string }; links: Map<string, string> }
 
 // The engine beneath the plugin: git in a repo with one change, files in memory,
 // every tool answering ok (Write/Edit store their text so validation can read it).
@@ -17,6 +17,8 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   const ask = { value: 'Fix the date parser' }
   const id = { value: 'unknown' }
   const status = { value: ' M src/a.ts\n M src/c.ts\n?? src/b.ts\n' }
+  const exclude = { value: `${ROOT}/.git/info/exclude\n` }
+  const links = new Map<string, string>() // path -> where it really leads
   mock.clock(on, { now: Date.parse('2026-10-19T15:02:00Z') })
   // A store the test can read back, so saved state can be checked.
   const kv = new Map<string, unknown>(Object.entries(store))
@@ -38,7 +40,7 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
     if (a === 'branch --show-current') return out('main\n')
     if (a === 'rev-parse --short HEAD') return out(`${head.value}\n`)
     if (a === 'status --porcelain') return out(status.value)
-    if (a === 'rev-parse --path-format=absolute --git-path info/exclude') return out(`${ROOT}/.git/info/exclude\n`)
+    if (a === 'rev-parse --path-format=absolute --git-path info/exclude') return out(exclude.value)
     return out('')
   })
   on('fs.exists', ($, e) => ({ value: files.has(e.path) }))
@@ -48,6 +50,12 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
     return { value: t }
   })
   on('fs.write', ($, e) => (files.set(e.path, e.text), { value: undefined }))
+  // links: path -> where it leads; '' = a dangling link, which a resolving stat rejects (as a real one would).
+  on('fs.stat', ($, e) => {
+    const to = links.get(e.path)
+    if (to === '' && e.resolve) throw new Error('ENOENT')
+    return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: to !== undefined, realPath: to || e.path } } as never
+  })
   on('tool.call', ($, e) => {
     calls.push(e.tool)
     const x = e as unknown as { file_path?: string; content?: string; old_string?: string; new_string?: string }
@@ -66,7 +74,7 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   ] }) as never)
   on('ui.notify', ($, e) => (notes.push(e.text), { value: { isSent: true, channel: 'test' } }) as never)
   on('session.id', () => ({ value: id.value }))
-  return { files, calls, notes, store: kv, head, ask, id, status }
+  return { files, calls, notes, store: kv, head, ask, id, status, exclude, links }
 }
 
 const reading = (used: number, kind = 'five_hour', resetsAt = RESETS) => ({
@@ -348,10 +356,10 @@ describe('handoff validation', () => {
     expect(ctx(r)).toContain('resume prompt from the AUTO-PAUSE notice')
   })
 
-  test('over the word budget is flagged', { options: { handoff_word_budget: 20 } }, async ($, on) => {
+  test('over the word budget is flagged', { options: { handoff_word_budget: 100 } }, async ($, on) => {
     world(on); await start($)
     const { path, prompt } = await pauseNotice($)
-    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))).toContain('Cut it to about 20 words')
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt, 'word '.repeat(100)) } as never))).toContain('Cut it to about 100 words')
   })
 
   test('manual handoffs are validated without a pause', async ($, on) => {
@@ -672,5 +680,65 @@ describe('snapshot accuracy', () => {
     const { prompt } = await pauseNotice($)
     expect(prompt).toContain('(if not, tell the user before editing)')
     expect(prompt).toContain('ask the user before doing anything outside its Goal')
+  })
+})
+
+describe('abuse and misconfiguration', () => {
+  const gated = async ($: any) => { const p = await pauseNotice($); await $.session.measure(reading(98)); return p }
+
+  test('git commands spelled around the check stay gated', async ($, on) => {
+    world(on); await start($); await gated($)
+    for (const command of ['git status\ntouch /tmp/pwn', 'git log --out"put"=o1', 'git log --{output,x}=o2', "git log --output='o'",
+      'git log --outp=o', 'git diff --ext-diff', 'git status; rm -rf src', 'git status && touch x', 'git log | sh', 'git branch -D main',
+      'git -c core.pager=sh log', 'cd /tmp && rm x', 'git show $(id)', 'cd /tmp/evil && git status', 'cd .. && git status',
+      'git diff --no-index /dev/null /Users/me/.ssh/id_rsa', 'git diff -O/etc/passwd', 'cd'])
+      expect((await $.tool.call({ tool: 'Bash', command } as never)).deny).toContain('AUTO-PAUSE gate')
+  })
+
+  test('safe chains of read-only git pass the gate and skip the permission prompt', async ($, on) => {
+    world(on); await start($); await gated($)
+    const command = `cd "${ROOT}" && git status --short && git diff --stat; git log --oneline -3 && git rev-parse --short HEAD`
+    expect((await $.tool.call({ tool: 'Bash', command } as never)).deny).toBeUndefined()
+    expect((await $.tool.check({ tool: 'Bash', input: { command } } as never)).decision).toBe('allow')
+  })
+
+  test('reads while gated are capped', async ($, on) => {
+    world(on); await start($); await gated($)
+    for (let i = 0; i < 10; i++) expect((await $.tool.call({ tool: 'Read', file_path: `${ROOT}/src/a.ts` } as never)).deny).toBeUndefined()
+    expect((await $.tool.call({ tool: 'Read', file_path: `${ROOT}/src/a.ts` } as never)).deny).toContain('AUTO-PAUSE gate')
+  })
+
+  test('a tool input field called tool cannot pass for the handoff', async ($, on) => {
+    world(on); await start($); await gated($)
+    const r = await $.tool.check({ tool: 'mcp__x__run', input: { tool: 'Skill', skill: 'writing-handoffs', cmd: 'rm -rf /' } } as never)
+    expect(r.decision).toBe('ask')
+  })
+
+  test('a handoff folder that links outside the project is not auto-approved', async ($, on) => {
+    const w = world(on); w.links.set(`${ROOT}/.handoffs`, '/tmp/elsewhere'); await start($)
+    const { path } = await pauseNotice($)
+    expect((await $.tool.check({ tool: 'Write', input: { file_path: path, content: 'x' } } as never)).decision).toBe('ask')
+  })
+
+  test('a dangling link as the handoff folder is not auto-approved', async ($, on) => {
+    const w = world(on); w.links.set(`${ROOT}/.handoffs`, ''); await start($)
+    const { path } = await pauseNotice($)
+    expect((await $.tool.check({ tool: 'Write', input: { file_path: path, content: 'x' } } as never)).decision).toBe('ask')
+  })
+
+  test('old git echoing an unknown flag does not write a junk exclude file', async ($, on) => {
+    const w = world(on); w.exclude.value = '--path-format=absolute\n.git/info/exclude\n'; await start($)
+    await pauseNotice($)
+    expect([...w.files.keys()].some(k => k.includes('--path-format'))).toBe(false)
+  })
+
+  test('out-of-range settings fall back to the defaults', { options: { pause_at_percent_left: 500, warn_at_percent_left: -5, gate_after_points: 0, handoff_word_budget: 0 } }, async ($, on) => {
+    world(on); await start($)
+    await $.session.measure(reading(86))
+    expect(ctx(await $.tool.call(bash))).toContain('AUTO-PAUSE: warning.')
+    const { path, prompt } = await pauseNotice($)
+    for (let i = 0; i < 4; i++) expect((await $.tool.call(bash)).deny).toBeUndefined() // the notice call plus 4: 5 grace calls, not 0 points
+    expect((await $.tool.call(bash)).deny).toContain('AUTO-PAUSE gate')
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))).toContain('handoff OK')
   })
 })
