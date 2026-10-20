@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: e4-subagent-pause
+description: A subagent is mid-task when the simulated 6%-left reading lands (after 2 tool calls). The mod denies the subagent's next call; the parent should take the partial result, write a handoff that records it, and end with the resume prompt.
+context:
+  scaffold_script: scaffold.sh

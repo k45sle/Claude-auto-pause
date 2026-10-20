@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: e2r-real-mod
+description: Auto path through the real mod. The simulated 6%-left reading lands after 6 tool calls (typically the first edit). Claude should wrap up within the grace, use the skill, write one handoff at the mod's path, and end with the mod's resume prompt. The no-plugin arm is the E6 baseline.
+context:
+  scaffold_script: scaffold.sh

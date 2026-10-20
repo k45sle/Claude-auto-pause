@@ -140,7 +140,7 @@ It appears in three places:
 | `handoff_dir` | `.handoffs` | In-project, so you can open it in Desktop's file viewer. Added to `.git/info/exclude` (local-only, tracked files untouched). Not under `.claude/`: writes there are refused in default and dontAsk modes even with Write granted (Phase 0 and Phase 1 probes). |
 | `handoff_word_budget` | `600` | ≈ 800–1,000 tokens. Enough for a full resume without rebuilding stale context. |
 
-Dev-only override for tests, evals, and Desktop smoke tests: `AUTO_PAUSE_SIMULATE_PERCENT_LEFT`. Set it under `env` in `~/.claude/settings.json` for a Desktop smoke test. Remove it after.
+Dev-only override for tests, evals, and Desktop smoke tests: `AUTO_PAUSE_SIMULATE_PERCENT_LEFT`. Set it under `env` in `~/.claude/settings.json` for a Desktop smoke test. Remove it after. `AUTO_PAUSE_SIMULATE_AFTER_CALLS=N` delays the simulated reading until N tool calls have run. Evals use the `EVAL_`-prefixed copies of both, because `claude plugin eval` passes only `EVAL_*` variables to a case.
 
 ---
 
@@ -170,7 +170,7 @@ Each turn re-reads the (cached) context, so minimize turns after the pause notic
 4. Claude writes the handoff (1 turn). The mod validates it inside that same tool call and appends either "OK, end your turn with the resume prompt" or a specific fix list.
 5. Claude ends the turn with the handoff path, reset time, and resume prompt in a code block (1 turn).
 
-**Target: ≤ 3 turns after the safe point.** Phase 3 compares "invoke skill" against "template inlined in the notice" (saves 1 turn) and picks the cheaper one by measured %.
+**Target: ≤ 3 turns after the safe point.** Phase 3 compared "invoke skill" against "template inlined in the notice": inline saved 1–2 turns but cost the same and wrote worse handoffs, so the notice keeps pointing to the skill ([Phase 3](docs/phase3-results.md)).
 
 Rules: never switch model for the handoff (a model switch re-reads the whole history uncached). Skill `allowed-tools` pre-approves writes to the handoff dir, so nothing stalls on a Desktop permission prompt while you're away. If that rule syntax doesn't cover it, a narrow `tool.check` allow in the mod is the fallback.
 
@@ -303,7 +303,7 @@ metadata:
 | **4. Package and ship** | Installable on any Mac | `marketplace.json` and README. README install steps: `claude plugin marketplace add k45sle/Claude-auto-pause` in Terminal (settings are shared with Desktop), then Desktop **+ → Add plugins → auto-pause → User**. Also the recommended setting, config table, limitations, uninstall. Version 0.1.0. | Clean install on a second Mac or user account works in Desktop. | < 1 session |
 | *(v1.1 option)* | Same flow for context-window exhaustion | Trigger the same handoff when `context.percent` ≥ ~85%, instead of losing detail to auto-compact | — | small |
 
-Phase results: [Phase 0](docs/phase0-results.md), [Phase 1](docs/phase1-results.md), [Phase 2](docs/phase2-results.md).
+Phase results: [Phase 0](docs/phase0-results.md), [Phase 1](docs/phase1-results.md), [Phase 2](docs/phase2-results.md), [Phase 3](docs/phase3-results.md) (steps 1–2; the week of real use and the threshold retune are open).
 
 ---
 

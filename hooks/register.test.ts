@@ -192,6 +192,15 @@ describe('thresholds', () => {
     expect(status).toContain('auto-pause: paused (simulated 6% left)')
     expect(status).not.toContain('Calibration')
   })
+  test('simulate after N calls lands mid-task, on main or subagent calls', async ($, on) => {
+    world(on, { EVAL_AUTO_PAUSE_SIMULATE_PERCENT_LEFT: '6', EVAL_AUTO_PAUSE_SIMULATE_AFTER_CALLS: '2' }); await start($)
+    expect(ctx(await $.tool.call(bash))).toBe('')
+    expect((await $.tool.call({ tool: 'Read', file_path: `${ROOT}/a.ts`, agentId: 'sub1' } as never)).deny).toBeUndefined()
+    expect((await $.tool.call({ tool: 'Read', file_path: `${ROOT}/b.ts`, agentId: 'sub1' } as never)).deny).toContain('return to the parent')
+    expect(ctx(await $.tool.call(bash))).toContain('AUTO-PAUSE: pause threshold reached. 5-hour usage 94% used (6% left)')
+    await $.session.measure(reading(40)) // a real reading must not restart the pause
+    expect(ctx(await $.tool.call(bash))).toBe('')
+  })
 })
 
 describe('gate', () => {

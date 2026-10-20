@@ -32,6 +32,7 @@ function config(o: Record<string, unknown>) {
 
 let phase: Phase = 'normal'
 let simulated: number | undefined
+let simulateAfter: { calls: number; left: number } | undefined // dev-only: simulated reading lands mid-task
 let hasData = false
 let saidNoData = false
 let contextTokens: number | undefined
@@ -51,8 +52,8 @@ const isHandoffCall = (e: { tool: string; [k: string]: unknown }) =>
 async function onReading($: $, rateLimits: readonly SessionRateLimit[]) {
   let limits = rateLimits.filter((r): r is SessionRateLimit & { kind: Kind } => r.kind === 'five_hour' || r.kind === 'seven_day')
   if (simulated !== undefined) {
-    const five = limits.find(r => r.kind === 'five_hour')
-    limits = [...limits.filter(r => r.kind !== 'five_hour'), { kind: 'five_hour', percentUsed: 100 - simulated, resetsAt: five?.resetsAt }]
+    // No resetsAt: a stable window key, so real readings never look like a reset.
+    limits = [...limits.filter(r => r.kind !== 'five_hour'), { kind: 'five_hour', percentUsed: 100 - simulated }]
   }
   if (!limits.length) {
     if (!hasData && !saidNoData) {
@@ -174,10 +175,12 @@ export const register: Register = (on, options) => {
   cfg = config(options as Record<string, unknown>)
 
   on('session.start', async ($, e, next) => {
-    const sim = await $.env.get('AUTO_PAUSE_SIMULATE_PERCENT_LEFT')
+    // Dev-only. The EVAL_ copies exist because claude plugin eval passes only EVAL_* vars to a case.
+    const sim = (await $.env.get('AUTO_PAUSE_SIMULATE_PERCENT_LEFT')) || (await $.env.get('EVAL_AUTO_PAUSE_SIMULATE_PERCENT_LEFT'))
     if (sim !== undefined && sim !== '' && !Number.isNaN(Number(sim))) {
-      simulated = Number(sim)
-      await onReading($, [])
+      const after = Number((await $.env.get('AUTO_PAUSE_SIMULATE_AFTER_CALLS')) || (await $.env.get('EVAL_AUTO_PAUSE_SIMULATE_AFTER_CALLS')))
+      if (after > 0) simulateAfter = { calls: after, left: Number(sim) }
+      else { simulated = Number(sim); await onReading($, []) }
     }
     await $.command.register({ name: 'auto-pause-status', description: 'Show auto-pause state, the latest resume prompt for this folder, and calibration.' }).catch(() => {})
     return next(e)
@@ -190,6 +193,11 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', async ($, e, next) => {
+    if (simulateAfter && --simulateAfter.calls < 0) {
+      simulated = simulateAfter.left
+      simulateAfter = undefined
+      await onReading($, [])
+    }
     const active = phase === 'pausing' || phase === 'gated'
     if (e.agentId !== undefined) {
       return active ? { deny: 'AUTO-PAUSE: the session is pausing for the usage limit. Stop and return to the parent now with what you have.' } : next(e)
