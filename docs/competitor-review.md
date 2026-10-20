@@ -26,6 +26,8 @@ If the Desktop handoff ever starts on usage instead, most of this plugin becomes
 
 Lower overlap: redline (status-line budget pacer, no handoff), claude-usage-guard (deny or sleep), claude-limit-guard and agent-limit-retry (one Stop reminder, no gate), claude-handoff-guard, claude-cache-guard, claude-pro-kit. marathon-mode returned 404.
 
+Added 2026-10-20: [jpwinans/usage-auto-pause](https://github.com/jpwinans/usage-auto-pause) (MIT, one commit on 2026-10-02) has a similar name but a different job. It paces weekly usage: a `PreToolUse` hook sleeps when you are 8 or more hours ahead of an even weekly pace or past 98%, then lets the same session continue. It writes no handoff, reads Claude usage from an unofficial OAuth endpoint with the Keychain login, does not mention the Desktop app, and also supports Codex. Nothing was taken from it.
+
 ## What auto-pause took from them
 
 | Change | Taken from |
