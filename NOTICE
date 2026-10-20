@@ -9,3 +9,20 @@ Changes: ported from Rust to TypeScript and extended with more key and password 
 
 The read-only git allowlist used while pausing follows the idea of handoff-now's
 freeze allowlist; the code here is written separately.
+
+Ideas taken from other plugins (no code copied; the code here is written separately):
+- handoff-now (https://github.com/talal-ai/handoff-now, Apache 2.0): read-only tool
+  allowlist while pausing, a handoff written by code when the model cannot, and quoting
+  the user's last messages in the handoff.
+- agent-usage-guard (https://github.com/rbartoli/agent-usage-guard, MIT, Riccardo Bartoli):
+  keeping pause state across reloads, ignoring usage readings whose reset time has passed,
+  and letting subagents return while pausing.
+- claude-auto-handoff (https://github.com/alexknowshtml/claude-auto-handoff, MIT, Alex Hillman):
+  keeping pause state across reloads, listing edited files and the user's last messages,
+  and asking whether the last request was finished.
+- handoff-guard (https://github.com/angkaworn-dotcom/handoff-guard, MIT): having the resumed
+  session confirm the repo state with the user before it starts.
+- MohammadMD1383's usage guard (https://github.com/MohammadMD1383): writing a snapshot
+  handoff when the turn fails at the limit.
+- agent-layer usage-guard: falling back to /usr/bin/git when hooks run without PATH.
+- claude-limit-guard: ignoring usage readings whose reset time has passed.

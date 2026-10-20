@@ -2,6 +2,19 @@
 
 Claude has two usage limits: one resets every 5 hours, the other every week. When you get close to one, this plugin makes Claude stop at a good moment and save a note (Claude calls it a "handoff") about where it left off, and give you a resume prompt to copy. After the limit resets, you paste the resume prompt into a new chat session and Claude carries on.
 
+## How it's different
+
+Other plugins do parts of this. auto-pause is the only one we found that does all of it:
+
+- It watches your actual plan usage, both the 5-hour and the weekly limit. Some others only see the 5-hour limit, or count how long the chat is instead.
+- It works in the Code tab of the Desktop app, not only in the Terminal.
+- After a few extra steps to finish up, Claude's tools lock until the note is written.
+- The plugin checks the note before accepting it. It must point to the right version of your project, list every file you changed, and contain no passwords or keys.
+- It adds your last few messages word for word, so the new chat works from what you actually asked.
+- If Claude runs out before finishing, the plugin writes a basic note by itself.
+
+The full comparison is in [docs/competitor-review.md](docs/competitor-review.md).
+
 Version 0.1.5. Still being tested.
 
 ## What you need
@@ -96,6 +109,12 @@ Your notes stay. Delete the `.handoffs` folder in a project if you don't want th
 
 How it works, every setting, and the security details: [docs/details.md](docs/details.md).
 
+## Credits
+
+The patterns that spot passwords and keys in a note are adapted from [handoff-now](https://github.com/talal-ai/handoff-now) (Apache 2.0). That is the only code taken from another project.
+
+Some ideas came from other plugins, written here as our own code: [handoff-now](https://github.com/talal-ai/handoff-now), [agent-usage-guard](https://github.com/rbartoli/agent-usage-guard), [claude-auto-handoff](https://github.com/alexknowshtml/claude-auto-handoff), [handoff-guard](https://github.com/angkaworn-dotcom/handoff-guard), [MohammadMD1383](https://github.com/MohammadMD1383)'s usage guard, agent-layer's usage-guard and claude-limit-guard. [NOTICE](NOTICE) says which idea came from where.
+
 ## License
 
-MIT. The secret patterns are adapted from [handoff-now](https://github.com/talal-ai/handoff-now) (Apache 2.0); see [NOTICE](NOTICE).
+MIT. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
