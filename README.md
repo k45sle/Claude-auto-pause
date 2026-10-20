@@ -42,6 +42,27 @@ claude plugin install auto-pause@k45sle --scope user
 
 In the Desktop app you can instead open **+ → Add plugins** in a Code session after adding the marketplace, and install `auto-pause` at User scope.
 
+## Settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| `pause_at_percent_left` | 8 | Pause and write a handoff when this much of the 5-hour window is left (8 means at 92% used) |
+| `warn_at_percent_left` | 15 | Warn Claude to wrap up the current step at this much left |
+| `weekly_pause_at_percent_left` | 3 | The same pause for the 7-day window |
+| `weekly_warn_at_percent_left` | 10 | The same warning for the 7-day window |
+| `gate_after_tool_calls` | 5 | Tool calls Claude gets after the pause notice to finish or revert its step |
+| `gate_after_points` | 3 | Usage points Claude gets after the pause notice, whichever runs out first |
+| `handoff_dir` | `.handoffs` | Folder for handoffs, relative to the project, using letters, digits, `.`, `_`, `-` and `/`. Anything else is ignored and `.handoffs` is used |
+| `handoff_word_budget` | 600 | Target handoff length; over 1.2 times this is sent back to be cut |
+
+To change one, run `/plugin configure auto-pause@k45sle` in a Claude Code session, or from a terminal:
+
+```bash
+echo '{"pause_at_percent_left": 10}' | claude plugin configure auto-pause@k45sle --values-stdin
+```
+
+Restart Claude Code (or the Desktop app) afterwards. `/auto-pause-status` shows the thresholds in use.
+
 ## Recommended setting
 
 Since you resume by hand, turn off the built-in auto-continue in `~/.claude/settings.json`:

@@ -1,6 +1,6 @@
 {
   "name": "auto-pause",
-  "version": "0.0.3",
+  "version": "0.0.5",
   "description": "Pauses Claude Code at a safe point before the usage limit and writes a handoff with a ready-to-paste resume prompt.",
   "author": {
     "name": "Kassle",
@@ -55,7 +55,7 @@
     "handoff_dir": {
       "type": "string",
       "title": "Handoff folder",
-      "description": "Folder for handoffs, relative to the project root. Kept out of git via .git/info/exclude.",
+      "description": "Folder for handoffs, relative to the project root (letters, digits, . _ - and / only). Kept out of git via .git/info/exclude.",
       "default": ".handoffs"
     },
     "handoff_word_budget": {

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Prints the facts a handoff needs: handoff path, repo state, resume prompt.
-# Usage: facts.sh [task-slug]. Creates the handoff folder and keeps it out of git. Always exits 0.
+# Usage: facts.sh [task-slug] [handoff-dir]. Creates the handoff folder and keeps it out of git. Always exits 0.
 set -u
 slug=$(printf '%s' "${1:-task}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-*//; s/-*$//' | cut -c1-40)
 [ -n "$slug" ] || slug=task
-# shortcut: folder is fixed to .handoffs; a custom handoff_dir applies only on the auto path (the mod). Read the option here if users ask for it.
-dir_rel=.handoffs
+# The plugin's handoff_dir option, substituted into SKILL.md. Same rule as the mod: relative, plain
+# characters, no `..`; anything else (including the unsubstituted placeholder) falls back to .handoffs.
+dir_rel=$(printf '%s' "${2:-}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s#^\./##; s#/*$##')
+case "$dir_rel" in ''|.|/*|*..*|*[!A-Za-z0-9._/-]*) dir_rel=.handoffs ;; esac
 
 project=$(git rev-parse --show-toplevel 2>/dev/null) && in_git=1 || { project=$PWD; in_git=0; }
 dir="$project/$dir_rel"

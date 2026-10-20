@@ -167,6 +167,17 @@ describe('thresholds', () => {
     expect(ctx(await $.tool.call(bash))).toContain('7-day usage 97% used (3% left)')
   })
 
+  test('a custom handoff folder is used; an absolute or .. one falls back to .handoffs', { options: { handoff_dir: './notes/handoffs/' } }, async ($, on) => {
+    world(on); await start($)
+    expect((await pauseNotice($)).path).toContain(`${ROOT}/notes/handoffs/`)
+  })
+
+  for (const bad of ['/tmp/x', '   ', '.', '../x', "a'; touch y; '"])
+    test(`handoff folder ${JSON.stringify(bad)} falls back to .handoffs`, { options: { handoff_dir: bad } }, async ($, on) => {
+      world(on); await start($)
+      expect((await pauseNotice($)).path).toContain(`${ROOT}/.handoffs/2`)
+    })
+
   test('custom thresholds from userConfig', { options: { pause_at_percent_left: 20, warn_at_percent_left: 30 } }, async ($, on) => {
     world(on); await start($)
     await $.session.measure(reading(81))

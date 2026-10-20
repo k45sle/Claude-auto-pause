@@ -57,7 +57,8 @@ function config(o: Record<string, unknown>) {
     pause: { five_hour: num('pause_at_percent_left', 8), seven_day: num('weekly_pause_at_percent_left', 3) },
     gateCalls: num('gate_after_tool_calls', 5),
     gatePoints: num('gate_after_points', 3),
-    dir: String(o.handoff_dir || '.handoffs').replace(/^\.\//, '').replace(/\/+$/, ''),
+    // Relative to the project root, plain characters only; anything else falls back (facts.sh applies the same rule).
+    dir: ((d: string) => (/^[\w.-][\w./-]*$/.test(d) && !d.includes('..') && d !== '.' ? d : '.handoffs'))(String(o.handoff_dir ?? '').trim().replace(/^\.\//, '').replace(/\/+$/, '')),
     words: num('handoff_word_budget', 600),
   }
 }

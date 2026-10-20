@@ -22,7 +22,7 @@ A handoff is one Markdown file that lets a fresh session continue this task with
 1. **Reach a safe point.** If an edit is in flight and one or two calls finish it, finish it. Otherwise revert it, or record its exact state (`path:line`, what is done, what is not). Start nothing new. If an AUTO-PAUSE notice gives a tool-call limit, stay within it.
 2. **Get the facts.**
    - Auto path: the AUTO-PAUSE notice gives the handoff path, usage, reset time, repo state, and resume prompt. Use them exactly as given. Do not run the script.
-   - Manual path: run `bash "${CLAUDE_SKILL_DIR}/scripts/facts.sh" <slug>`, where the slug is 2–4 words naming the task. It prints the handoff path, repo state, and resume prompt. If the script cannot run, use `<project root>/.handoffs/<YYYY-MM-DDTHHMM>-<slug>.md` (date only if you don't know the time) and this resume prompt, with both absolute paths filled in:
+   - Manual path: run `bash "${CLAUDE_SKILL_DIR}/scripts/facts.sh" <slug> '${user_config.handoff_dir}'`, where the slug is 2–4 words naming the task. It prints the handoff path, repo state, and resume prompt. If the script cannot run, use `<project root>/${user_config.handoff_dir}/<YYYY-MM-DDTHHMM>-<slug>.md` (use `.handoffs` instead if that folder name is blank, still shows `user_config`, or is not a plain relative path) (date only if you don't know the time) and this resume prompt, with both absolute paths filled in:
      ```text
      Resume paused work in <project root>.
      Read <handoff path> first. It is your only context from the previous session.
