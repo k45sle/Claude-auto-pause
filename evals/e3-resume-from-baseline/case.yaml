@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: e3-resume-from-baseline
+description: Cold resume. A fresh session gets only the resume prompt and a handoff written by the E1 baseline arm.
+context:
+  scaffold_script: scaffold.sh

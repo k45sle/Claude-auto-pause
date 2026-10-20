@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: e2-auto-notice
+description: Auto path. An AUTO-PAUSE notice (the Phase 2 mod's draft format) arrives while work remains. Claude should stop, use the skill, write the handoff at the given path, and end with the given resume prompt.
+context:
+  scaffold_script: scaffold.sh

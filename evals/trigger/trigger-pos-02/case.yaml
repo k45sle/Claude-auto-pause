@@ -1,0 +1,13 @@
+schema_version: "1.1"
+name: trigger-pos-02
+tags: [trigger]
+runs: 1
+execution:
+  max_turns: 4
+  allowed_tools: [Skill]
+  prompt: "I'm about to hit my usage limit. Save our progress so I can carry on in a new session after it resets."
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?writing-handoffs"'

@@ -108,7 +108,7 @@ state   NORMAL          WARNED          PAUSING   GATED          (limit)
 
 ```text
 Resume paused work in /Users/<you>/code/<repo>.
-Read /Users/<you>/code/<repo>/.claude/handoffs/2026-10-19T1502-fix-auth.md first. It is your only context from the previous session.
+Read /Users/<you>/code/<repo>/.handoffs/2026-10-19T1502-fix-auth.md first. It is your only context from the previous session.
 Check that `git status` matches its "Repo state" section, then start with Next step 1.
 Read only the files it points to unless you need more.
 ```
@@ -137,7 +137,7 @@ It appears in three places:
 | `gate_after_tool_calls` | `5` | Enough to finish or revert one edit and run one check. |
 | `gate_after_points` | `3` | Hard backstop if a few calls are huge. |
 | `weekly_warn_at_percent_left` / `weekly_pause_at_percent_left` | `10` / `3` | The weekly window is long. Pause later, but still before a hard stop. |
-| `handoff_dir` | `.claude/handoffs` | In-project, so you can open it in Desktop's file viewer. Added to `.git/info/exclude` (local-only, tracked files untouched). |
+| `handoff_dir` | `.handoffs` | In-project, so you can open it in Desktop's file viewer. Added to `.git/info/exclude` (local-only, tracked files untouched). Not under `.claude/`: writes there are refused in default and dontAsk modes even with Write granted (Phase 0 and Phase 1 probes). |
 | `handoff_word_budget` | `600` | ≈ 800–1,000 tokens. Enough for a full resume without rebuilding stale context. |
 
 Dev-only override for tests, evals, and Desktop smoke tests: `AUTO_PAUSE_SIMULATE_PERCENT_LEFT`. Set it under `env` in `~/.claude/settings.json` for a Desktop smoke test. Remove it after.
@@ -153,7 +153,7 @@ Dev-only override for tests, evals, and Desktop smoke tests: `AUTO_PAUSE_SIMULAT
 | Manifest | `.claude-plugin/plugin.json` | Metadata and `userConfig` | Install-time config dialog. No settings edits. |
 | **Monitor/gate mod** | `hooks/hooks.json` → `hooks/register.ts` | Reads `session.measure`, runs the state machine, injects notices (with the handoff path and pre-built resume prompt), gates tools, blocks Stop once, validates handoffs on write, shows toasts, writes the calibration log, registers `/auto-pause:status` | Deterministic. Pushed data. One file. Unit-testable offline. |
 | **Handoff skill** | `skills/writing-handoffs/SKILL.md` | How to reach a safe point and write a resumable handoff | Judgment work belongs in a skill. It is also usable manually ("write a handoff"). |
-| Template | `skills/writing-handoffs/assets/handoff-template.md` | The section structure | One level deep (best practice) |
+| Template | inlined in `skills/writing-handoffs/SKILL.md` | The section structure | A separate file costs one extra Read turn at pause time (Phase 1 decision) |
 | Facts script | `skills/writing-handoffs/scripts/facts.sh` | Manual path only: git state, handoff path, resume prompt. Always exits 0. | "Solve, don't punt". On the auto path the mod puts all of this in the notice. |
 | Tests | `hooks/*.test.ts` | State machine, gate, Stop, validation, resume-prompt builder | `claude plugin test`. Free. Under a second. |
 | Evals | `evals/` | Skill triggering, handoff quality, resume quality | `claude plugin eval`. Costs quota, so keep it small. |
@@ -227,7 +227,6 @@ hooks/hooks.json
 hooks/register.ts
 hooks/register.test.ts
 skills/writing-handoffs/SKILL.md
-skills/writing-handoffs/assets/handoff-template.md
 skills/writing-handoffs/scripts/facts.sh
 evals/…
 README.md
@@ -244,7 +243,7 @@ PLAN.md
 ---
 name: writing-handoffs
 description: Writes a compact handoff document and a ready-to-paste resume prompt that let a fresh Claude Code session resume the current task without the old conversation. Use when an AUTO-PAUSE notice says the usage-limit pause threshold was reached, or when the user asks to write a handoff, wrap up for a new session, save progress before the usage limit, pause here, or hand off to a fresh session. Do not use for summarizing finished work, changelogs, commit messages, or PR descriptions.
-allowed-tools: Read Write Edit Bash(git status:*) Bash(git diff:*) Bash(git log:*)
+allowed-tools: Read Write Edit Bash(git status:*) Bash(git diff:*) Bash(git log:*) Bash(bash *writing-handoffs/scripts/facts.sh*)
 metadata:
   version: 0.1.0
 ---
@@ -258,7 +257,7 @@ metadata:
 2. `## Workflow` as a copyable checklist:
    1. Reach a safe point.
    2. Take the facts and resume prompt from the notice, or run `scripts/facts.sh` on the manual path.
-   3. Write to the given path using `assets/handoff-template.md`, with the resume prompt verbatim at the top.
+   3. Write to the given path using the template inlined in SKILL.md, with the resume prompt verbatim at the top in a fenced `text` block (copyable, unlike a blockquote).
    4. If the monitor reports problems, fix them in one Edit.
    5. End with the handoff path, the reset time, and the resume prompt in a code block.
 3. `## Writing rules`: write for a zero-context reader; Next step 1 must be executable as-is; point to files by `path:line` and don't paste them; give each decision its reason; list dead ends; no secrets.
@@ -270,7 +269,7 @@ metadata:
 |---|---|
 | Concise; assume Claude is smart | Only the rules Claude lacks (turn budget, resumability bar). No explanation of git or markdown. |
 | Degrees of freedom | Low freedom for the safe-point, turn-budget, and resume-prompt rules (verbatim). Medium freedom for the template. High freedom for wording. |
-| Progressive disclosure, one level deep | SKILL.md → `assets/handoff-template.md`, `scripts/facts.sh` |
+| Progressive disclosure, one level deep | SKILL.md → `scripts/facts.sh` (template inlined to save a turn) |
 | Scripts solve, don't punt; no voodoo constants | `facts.sh` always exits 0 and degrades outside git. Every default in §3 has a stated reason. |
 | Feedback loop | Validation runs in the mod on Write: validate → fix → done |
 | Consistent terminology | Always "handoff", "resume prompt", "pause threshold", "safe point" |
@@ -285,7 +284,7 @@ metadata:
 
 **Working method (applies to every phase):**
 
-- One phase per fresh session. Start with: *"Read PLAN.md and the latest file in .claude/handoffs/; do Phase N."* From Phase 1 on, end each session by asking for a handoff, which dogfoods the skill and its resume prompt.
+- One phase per fresh session. Start with: *"Read PLAN.md and the latest file in .handoffs/; do Phase N."* From Phase 1 on, end each session by asking for a handoff, which dogfoods the skill and its resume prompt.
 - **Three-speed dev loop.** Use the fastest loop that answers the question:
   1. **Logic:** `claude plugin validate .` and `claude plugin test` in Terminal. Offline, free, under a second.
   2. **Live smoke test:** `claude --plugin-dir .` in Terminal, with `AUTO_PAUSE_SIMULATE_PERCENT_LEFT` set. Same mod runtime as Desktop, and `/reload-plugins` picks up edits.
@@ -303,6 +302,8 @@ metadata:
 | **3. End-to-end evals and calibration** | Prove it on real behavior; tune defaults | 1. `claude plugin eval` with the simulate env var and `context.history_file` mid-task transcripts (E4–E6). 2. Compare skill-invoke vs. inlined-template turn cost. Keep the cheaper one. 3. Use it in Desktop for a week of normal work. 4. Set `pause_at_percent_left` = p95(handoff cost) + 2 points. | Evals pass at ≥ 2/3 runs per case. ≥ 3 real pauses logged. Defaults updated with the measured numbers. | 1 session + a week of normal use |
 | **4. Package and ship** | Installable on any Mac | `marketplace.json` and README. README install steps: `claude plugin marketplace add k45sle/Claude-auto-pause` in Terminal (settings are shared with Desktop), then Desktop **+ → Add plugins → auto-pause → User**. Also the recommended setting, config table, limitations, uninstall. Version 0.1.0. | Clean install on a second Mac or user account works in Desktop. | < 1 session |
 | *(v1.1 option)* | Same flow for context-window exhaustion | Trigger the same handoff when `context.percent` ≥ ~85%, instead of losing detail to auto-compact | — | small |
+
+Phase results: [Phase 0](docs/phase0-results.md), [Phase 1](docs/phase1-results.md).
 
 ---
 
@@ -358,7 +359,7 @@ metadata:
 
 ## 10. Decisions for you (defaults chosen; change any)
 
-1. **Handoff location:** project `.claude/handoffs/`, git-excluded (recommended), or the plugin's data dir outside the repo?
+1. **Handoff location:** project `.handoffs/`, git-excluded (recommended; `.claude/` writes are refused without a permission prompt), project `.claude/handoffs/` relying on the Phase 2 mod's `tool.check` allow, or the plugin's data dir outside the repo?
 2. **Context-window trigger:** v1.1 (recommended) or v1?
 3. **`autoContinueAtUsageLimit: false`:** recommended for a manual-resume workflow (§3). Keep it on only if you'd rather the old session finish an interrupted handoff on its own.
 

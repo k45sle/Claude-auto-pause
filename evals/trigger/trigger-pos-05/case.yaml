@@ -1,0 +1,13 @@
+schema_version: "1.1"
+name: trigger-pos-05
+tags: [trigger]
+runs: 1
+execution:
+  max_turns: 4
+  allowed_tools: [Skill]
+  prompt: "can you leave notes so another Claude session can continue this task where we left off?"
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?writing-handoffs"'

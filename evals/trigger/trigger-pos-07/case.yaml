@@ -1,0 +1,13 @@
+schema_version: "1.1"
+name: trigger-pos-07
+tags: [trigger]
+runs: 1
+execution:
+  max_turns: 4
+  allowed_tools: [Skill]
+  prompt: "give me a resume prompt I can paste into a new Code session tomorrow, and write down where we are"
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?writing-handoffs"'

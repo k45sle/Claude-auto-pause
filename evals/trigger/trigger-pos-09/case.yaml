@@ -1,0 +1,13 @@
+schema_version: "1.1"
+name: trigger-pos-09
+tags: [trigger]
+runs: 1
+execution:
+  max_turns: 4
+  allowed_tools: [Skill]
+  prompt: "Let's stop for today. Write up what's done, what's next and what we decided so a new session can pick it up."
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?writing-handoffs"'

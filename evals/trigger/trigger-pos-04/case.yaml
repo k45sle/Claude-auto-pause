@@ -1,0 +1,13 @@
+schema_version: "1.1"
+name: trigger-pos-04
+tags: [trigger]
+runs: 1
+execution:
+  max_turns: 4
+  allowed_tools: [Skill]
+  prompt: "pause here and hand this off to a new session"
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?writing-handoffs"'

@@ -1,0 +1,13 @@
+schema_version: "1.1"
+name: trigger-pos-08
+tags: [trigger]
+runs: 1
+execution:
+  max_turns: 4
+  allowed_tools: [Skill]
+  prompt: "I only have 5% of my 5 hour window left, dump the state of this task before I run out"
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?writing-handoffs"'
