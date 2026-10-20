@@ -2,7 +2,7 @@
 name: writing-handoffs
 description: Writes a compact handoff document and a ready-to-paste resume prompt that let a fresh Claude Code session resume the current task without the old conversation. Use when an AUTO-PAUSE notice says the usage-limit pause threshold was reached, or when the user asks to write a handoff, wrap up for a new session, save progress before the usage limit, pause here, or hand off to a fresh session. Do not use for summarizing finished work, changelogs, commit messages, or PR descriptions.
 metadata:
-  version: 0.1.2
+  version: 0.1.3
 ---
 
 # Writing handoffs

@@ -14,4 +14,4 @@ Run 2026-10-20 in the Desktop app (Code tab) on this Mac, auto-pause 0.1.2 insta
 
 - After `claude plugin update`, open Desktop chats keep the old copy until `/reload-plugins` or an app restart. A likely reason new chats can too: the app starts chat processes ahead of time (`~/.claude/spares/`). Not confirmed. The README now says to run `/reload-plugins` when the command is missing.
 - Not yet known: whether `/auto-pause-status` is missing in a new chat only from the slash menu before the first message (the mod registers it in `session.start`), or is not registered at all until a reload. To tell: in a new chat, send `/auto-pause-status` as the first message without reloading.
-- The appended session facts quote the user's message with its `<pasted_content id=…>` wrapper. The mod strips `<system-reminder>` text but not that tag.
+- The appended session facts quoted a pasted message with its `<pasted_content id=…>` wrapper tags. Fixed in 0.1.3: the tags are dropped and the pasted text kept.

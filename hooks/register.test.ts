@@ -694,6 +694,16 @@ describe('snapshot accuracy', () => {
     expect(w.files.get(path)!).toContain('- "why did AUTO-PAUSE fire?"')
   })
 
+  test('a pasted request keeps its text, even a leading tag, and loses its wrapper tags and reminders', async ($, on) => {
+    const w = world(on); await start($)
+    w.ask.value = '<ide_opened_file>a.ts</ide_opened_file><pasted_content id="6777">\n<b>Fix</b> the parser\n</pasted_content id="6777">\n<system-reminder>harness</system-reminder> then rerun the tests'
+    const { path, prompt } = await pauseNotice($)
+    await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never)
+    expect(w.files.get(path)!).toContain('- "<b>Fix</b> the parser then rerun the tests"')
+    expect(w.files.get(path)!).not.toContain('harness')
+    expect(w.files.get(path)!).not.toContain('pasted_content')
+  })
+
   test('the mod\'s own feedback is not taken for a user request', async ($, on) => {
     const w = world(on); await start($)
     w.ask.value = 'Stop hook feedback:\nAUTO-PAUSE: pause threshold reached.'

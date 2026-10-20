@@ -319,7 +319,10 @@ async function finishPause($: $, outcome: Outcome = 'verified') {
 async function sessionFacts($: $, root: string) {
   const msgs = await $.session.messages().catch(() => [])
   // Redact before flattening: some secret patterns match only at the start of a line.
-  const asks = msgs.filter(m => m.role === 'user').map(m => m.text.replace(/^\s*(?:<([\w-]+)[^>]*>[\s\S]*?<\/\1>\s*)+/, '').trim())
+  // Pasted text is the user's own words: keep it, and drop only its wrapper tags (their ids are meant to stay hidden)
+  // after the leading harness blocks, so a paste that opens with a tag keeps it.
+  const asks = msgs.filter(m => m.role === 'user').map(m => m.text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
+    .replace(/^\s*(?:<(?!pasted_content\b)([\w-]+)[^>]*>[\s\S]*?<\/\1>\s*)+/, '').replace(/<\/?pasted_content\b[^>]*>/g, '').trim())
     .filter(t => t && !/^(?:[\w ]{0,30}:\s*)?AUTO-PAUSE[: ]/.test(t)).slice(-3).map(t => flat(redact(t)).slice(0, 400))
   const edited = [...new Set(msgs.flatMap(m => m.toolUses ?? []).filter(u => FILE_TOOLS.has(u.tool)).map(u => String(u.input.file_path)))]
     .filter(f => !f.includes(`/${cfg.dir}/`)).map(f => (f.startsWith(`${root}/`) ? f.slice(root.length + 1) : f))
