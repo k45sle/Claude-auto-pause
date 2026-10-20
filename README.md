@@ -9,6 +9,14 @@
 
 Claude has two usage limits: one resets every 5 hours, the other every week. When you get close to one, this plugin makes Claude stop at a good moment and save a note (Claude calls it a "handoff") about where it left off, and give you a resume prompt to copy. After the limit resets, you paste the resume prompt into a new chat session and Claude carries on.
 
+## Why use it
+
+- You don't lose work halfway. Without it, Claude can hit the limit in the middle of a change and leave files half-edited, with no record of what it was doing.
+- A fresh chat uses less of your new limit. Claude's short-term memory of a chat (the "cache") runs out after an hour, so continuing the old chat after the reset makes it re-read the whole conversation at full price. A short note is much smaller.
+- The new chat starts from the right place, because the note is checked against your actual files.
+
+The cost: Claude spends part of your last 8% writing the note, and you paste the resume prompt yourself. We haven't yet measured how much usage this saves in real use.
+
 ## How it's different
 
 Many plugins warn you about usage, and some write a handoff note. auto-pause is the only one we found that locks Claude's tools until a checked note exists.
