@@ -2,7 +2,7 @@
 
 A Claude Code plugin that watches your 5-hour and weekly usage. Shortly before you hit the limit, it gets Claude to stop at a safe point, write a handoff file, and give you a resume prompt to paste into a new session after the reset.
 
-Status: in development (pre-0.1.0). [PLAN.md](PLAN.md) has the design, `docs/phase*-results.md` has what was tested in each phase, [docs/competitor-review.md](docs/competitor-review.md) compares it with similar plugins, and [docs/user-testing.md](docs/user-testing.md) has the simulated-user and abuse testing.
+Status: 0.1.0, still being tuned on real use. [PLAN.md](PLAN.md) has the design, `docs/phase*-results.md` has what was tested in each phase, [docs/competitor-review.md](docs/competitor-review.md) compares it with similar plugins, and [docs/user-testing.md](docs/user-testing.md) has the simulated-user and abuse testing.
 
 ## Requirements
 
