@@ -25,6 +25,8 @@ Then quit and reopen the Claude Desktop app (or start a new `claude` in the term
 
 To check that it works, type `/auto-pause-status` in a Code session. You should see `auto-pause: normal` and the warn and pause points. "No usage data yet" is normal until Claude has answered once.
 
+If `/auto-pause-status` is not offered in a chat, type `/reload-plugins` there first. The same goes for chats that were open before an update (`claude plugin update auto-pause@k45sle --scope user`).
+
 ## What you will see
 
 - At 15% of your 5-hour limit left, nothing visible happens. Claude gets a note to finish its current step rather than start new work.
