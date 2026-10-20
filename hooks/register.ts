@@ -22,7 +22,7 @@ function config(o: Record<string, unknown>) {
   const num = (k: string, d: number) => (o[k] !== undefined && o[k] !== '' && Number.isFinite(Number(o[k])) ? Number(o[k]) : d)
   return {
     warn: { five_hour: num('warn_at_percent_left', 15), seven_day: num('weekly_warn_at_percent_left', 10) },
-    pause: { five_hour: num('pause_at_percent_left', 6), seven_day: num('weekly_pause_at_percent_left', 3) },
+    pause: { five_hour: num('pause_at_percent_left', 8), seven_day: num('weekly_pause_at_percent_left', 3) },
     gateCalls: num('gate_after_tool_calls', 5),
     gatePoints: num('gate_after_points', 3),
     dir: String(o.handoff_dir || '.handoffs').replace(/^\.\//, '').replace(/\/+$/, ''),

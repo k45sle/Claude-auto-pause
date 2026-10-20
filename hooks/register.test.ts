@@ -109,6 +109,14 @@ describe('thresholds', () => {
     expect(ctx(await $.tool.call(bash))).toBe('')
   })
 
+  test('default pause point is 8% left (92% used)', async ($, on) => {
+    world(on); await start($)
+    await $.session.measure(reading(91))
+    expect(ctx(await $.tool.call(bash))).toContain('AUTO-PAUSE: warning.')
+    await $.session.measure(reading(92))
+    expect(ctx(await $.tool.call(bash))).toContain('AUTO-PAUSE: pause threshold reached. 5-hour usage 92% used (8% left)')
+  })
+
   test('pause notice carries absolute paths, repo state and a resume prompt, once', async ($, on) => {
     const w = world(on); await start($)
     const { notice, path, prompt } = await pauseNotice($)

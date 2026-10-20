@@ -26,7 +26,7 @@
       "type": "number",
       "title": "Pause at % left",
       "description": "5-hour window: pause and write a handoff when this much is left.",
-      "default": 6
+      "default": 8
     },
     "gate_after_tool_calls": {
       "type": "number",

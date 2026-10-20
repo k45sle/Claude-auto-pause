@@ -133,7 +133,7 @@ It appears in three places:
 | Key | Default | Rationale |
 |---|---|---|
 | `warn_at_percent_left` | `15` | Matches the research doc's "85% used" suggestion. Enough room to steer to a break. |
-| `pause_at_percent_left` | `6` | Your stated target. Retune after calibration. |
+| `pause_at_percent_left` | `8` | Your choice (2026-10-20): pause at 92% used. Users change it in the plugin's settings; no calibration retune. |
 | `gate_after_tool_calls` | `5` | Enough to finish or revert one edit and run one check. |
 | `gate_after_points` | `3` | Hard backstop if a few calls are huge. |
 | `weekly_warn_at_percent_left` / `weekly_pause_at_percent_left` | `10` / `3` | The weekly window is long. Pause later, but still before a hard stop. |

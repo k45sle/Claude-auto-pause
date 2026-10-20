@@ -31,7 +31,7 @@ Eval cost for this phase: about $3.40, including runs lost to the harness proble
 ## Calibration (steps 3 and 4, open)
 
 - Real readings come in whole percents (`utilization: 0.77` in the stream). A single handoff costs about $0.03–0.06 after the notice, so on Max it will usually register as 0 or 1 point. The p95 rule (p95 + 2) therefore needs a few real pauses, ideally on the smallest plan you use, before it means anything.
-- `pause_at_percent_left` stays at 6 until at least 3 real pauses are logged. Then read `/auto-pause-status`, which prints the suggested value, and update the `plugin.json` default.
+- `pause_at_percent_left` default is 8 (pause at 92% used), set by the owner on 2026-10-20. Steps 3–4 (a week of real use, retune to p95 + 2) are dropped: users adjust the value themselves. `/auto-pause-status` still prints a suggested value from the calibration log.
 
 ## Commands
 
