@@ -13,18 +13,13 @@ Claude has two usage limits: one resets every 5 hours, the other every week. Whe
 
 Many plugins warn you about usage, and some write a handoff note. auto-pause is the only one we found that locks Claude's tools until a checked note exists.
 
-| Plugin | Reads your real plan usage | Locks Claude's tools | Writes a note | Checks the note before unlocking | Desktop app |
-|---|---|---|---|---|---|
-| **auto-pause** | Yes, 5-hour and weekly | Yes | Yes | Yes | Yes |
-| [redline](https://github.com/sankalpgunturi/redline) | Yes | Yes | Summary only | No | Not shown |
-| [handoff-now](https://github.com/talal-ai/handoff-now) | 5-hour only | Risky edits only | Yes | No | Yes |
-| [claude-auto-handoff](https://github.com/alexknowshtml/claude-auto-handoff) | No, chat length | Yes | Yes | No | Not shown |
-| [agent-usage-guard](https://github.com/rbartoli/agent-usage-guard) | Yes | Helpers and big requests only | No | No | Yes |
-| [Agent Layer's Usage Guard](https://github.com/agent-layer-mcp/usage-guard) | Yes (unofficial source in Desktop) | Yes | Usage handover and a chat summary | No | Yes |
-| [claude-usage-guard](https://github.com/gokhanarkan/claude-usage-guard) | Yes | Optional (default waits for the reset) | No | No | Not shown |
-| [MohammadMD1383's usage-guard](https://github.com/MohammadMD1383/claude-plugins) | Yes | New helpers only | Yes | No | Not shown |
-| [claude-limit-guard](https://github.com/funhunter7/claude-limit-guard) | Yes | No | Yes | No | Not shown |
-| [agent-limit-retry](https://github.com/error0702/agent-limit-retry) | Yes | No, one reminder | Yes | No | Not shown |
+|  | **auto-pause** | [redline](https://github.com/sankalpgunturi/redline) | [handoff-now](https://github.com/talal-ai/handoff-now) | [claude-auto-handoff](https://github.com/alexknowshtml/claude-auto-handoff) | [agent-usage-guard](https://github.com/rbartoli/agent-usage-guard) | [Agent Layer's Usage Guard](https://github.com/agent-layer-mcp/usage-guard) | [claude-usage-guard](https://github.com/gokhanarkan/claude-usage-guard) | [MohammadMD1383's usage-guard](https://github.com/MohammadMD1383/claude-plugins) | [claude-limit-guard](https://github.com/funhunter7/claude-limit-guard) | [agent-limit-retry](https://github.com/error0702/agent-limit-retry) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Reads your real plan usage | Yes, 5-hour and weekly | Yes | 5-hour only | No, chat length | Yes | Yes (unofficial source in Desktop) | Yes | Yes | Yes | Yes |
+| Locks Claude's tools | Yes | Yes | Risky edits only | Yes | Helpers and big requests only | Yes | Optional (default waits for the reset) | New helpers only | No | No, one reminder |
+| Writes a note | Yes | Summary only | Yes | Yes | No | Usage handover and a chat summary | No | Yes | Yes | Yes |
+| Checks the note before unlocking | Yes | No | No | No | No | No | No | No | No | No |
+| Desktop app | Yes | Not shown | Yes | Not shown | Yes | Yes | Not shown | Not shown | Not shown | Not shown |
 
 "Not shown" means we found no sign of it, not that it's missing. Based on each project's own description and the code we read in October 2026; they may have changed since.
 
