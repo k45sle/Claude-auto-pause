@@ -2,7 +2,7 @@
 name: writing-handoffs
 description: Writes a compact handoff document and a ready-to-paste resume prompt that let a fresh Claude Code session resume the current task without the old conversation. Use when an AUTO-PAUSE notice says the usage-limit pause threshold was reached, or when the user asks to write a handoff, wrap up for a new session, save progress before the usage limit, pause here, or hand off to a fresh session. Do not use for summarizing finished work, changelogs, commit messages, or PR descriptions.
 metadata:
-  version: 0.1.0
+  version: 0.1.1
 ---
 
 # Writing handoffs
@@ -21,7 +21,7 @@ A handoff is one Markdown file that lets a fresh session continue this task with
 1. **Reach a safe point.** If an edit is in flight and one or two calls finish it, finish it. Otherwise revert it, or record its exact state (`path:line`, what is done, what is not). Start nothing new. If an AUTO-PAUSE notice gives a tool-call limit, stay within it.
 2. **Get the facts.**
    - Auto path: the AUTO-PAUSE notice gives the handoff path, usage, reset time, repo state, and resume prompt. Use them exactly as given. Do not run the script.
-   - Manual path (no AUTO-PAUSE notice): your first call is `bash "${CLAUDE_SKILL_DIR}/scripts/facts.sh" <slug> '${user_config.handoff_dir}'`, where the slug is 2–4 words naming the task. It prints the handoff path, repo state, and resume prompt. If the script cannot run, use `<project root>/${user_config.handoff_dir}/<YYYY-MM-DDTHHMM>-<slug>.md` (use `.handoffs` instead if that folder name is blank, still shows `user_config`, or is not a plain relative path) (date only if you don't know the time) and this resume prompt, with both absolute paths filled in:
+   - Manual path (no AUTO-PAUSE notice): your first call is `bash "${CLAUDE_SKILL_DIR}/scripts/facts.sh" <slug> '${user_config.handoff_dir}'`, where the slug is 2–4 words naming the task. It prints the handoff path, repo state, and resume prompt. If the script cannot run, use `<project root>/${user_config.handoff_dir}/<YYYY-MM-DDTHHMM>-<slug>.md` (`.handoffs` if that setting is blank, still shows `user_config`, or is not a plain relative path) and this resume prompt, with both absolute paths filled in:
      ```text
      Resume paused work in <project root>.
      Read <handoff path> first. It is your only context from the previous session.
@@ -89,39 +89,4 @@ Resume prompt (paste into a new Code session):
 
 ## Example
 
-```markdown
-# Handoff: rate-limit retry in API client
-
-Paused 2026-10-19 15:02 · 5h 94% used, resets 17:00 · reason: AUTO-PAUSE
-
-Resume prompt (paste into a new Code session):
-
-    Resume paused work in /Users/sam/code/billing.
-    Read /Users/sam/code/billing/.handoffs/2026-10-19T1502-api-retry.md first. ...
-
-## Goal
-"Retry 429s with backoff in the API client" · Done when: `npm test` passes and client.ts retries 429 up to 3 times.
-
-## Status
-- Done: backoff helper in src/retry.ts with tests (pass).
-- In progress: src/client.ts `request()` wraps fetch in `withRetry` (client.ts:41); `stream()` not wrapped yet.
-- Not started: honoring the Retry-After header.
-- Last request: partly; `stream()` and Retry-After are left.
-
-## Next steps
-1. In src/client.ts `stream()` (line 88), wrap the fetch call in `withRetry` like `request()` does at line 41.
-2. Parse Retry-After in src/retry.ts `nextDelay()`; prefer it over the computed backoff.
-3. Run `npm test`.
-
-## Decisions (don't relitigate)
-- No retry on 5xx: the user wants 5xx to surface immediately.
-
-## Dead ends
-- Tried p-retry; dropped because it cannot read response headers.
-
-## Verify
-- `npm test`: 41 passed, 0 failed (before the stream() change).
-
-## Repo state
-main · a1b2c3d Add retry helper · uncommitted: M src/client.ts · stashes: 0 · background processes: none
-```
+Only if unsure how a section should read: `${CLAUDE_SKILL_DIR}/references/example.md`. Skip it otherwise.
