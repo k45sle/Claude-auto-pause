@@ -2,9 +2,67 @@
   "name": "auto-pause",
   "version": "0.0.1",
   "description": "Pauses Claude Code at a safe point before the usage limit and writes a handoff with a ready-to-paste resume prompt.",
-  "author": { "name": "Kassle", "url": "https://github.com/k45sle" },
+  "author": {
+    "name": "Kassle",
+    "url": "https://github.com/k45sle"
+  },
   "homepage": "https://github.com/k45sle/Claude-auto-pause",
   "repository": "https://github.com/k45sle/Claude-auto-pause",
   "license": "MIT",
-  "keywords": ["usage-limit", "handoff", "rate-limit", "mods"]
+  "keywords": [
+    "usage-limit",
+    "handoff",
+    "rate-limit",
+    "mods"
+  ],
+  "userConfig": {
+    "warn_at_percent_left": {
+      "type": "number",
+      "title": "Warn at % left",
+      "description": "5-hour window: warn when this much is left.",
+      "default": 15
+    },
+    "pause_at_percent_left": {
+      "type": "number",
+      "title": "Pause at % left",
+      "description": "5-hour window: pause and write a handoff when this much is left.",
+      "default": 6
+    },
+    "gate_after_tool_calls": {
+      "type": "number",
+      "title": "Gate after tool calls",
+      "description": "Tool calls allowed after the pause notice before non-handoff tools are refused.",
+      "default": 5
+    },
+    "gate_after_points": {
+      "type": "number",
+      "title": "Gate after points",
+      "description": "Usage points allowed after the pause notice before non-handoff tools are refused.",
+      "default": 3
+    },
+    "weekly_warn_at_percent_left": {
+      "type": "number",
+      "title": "Weekly warn at % left",
+      "description": "7-day window: warn when this much is left.",
+      "default": 10
+    },
+    "weekly_pause_at_percent_left": {
+      "type": "number",
+      "title": "Weekly pause at % left",
+      "description": "7-day window: pause when this much is left.",
+      "default": 3
+    },
+    "handoff_dir": {
+      "type": "string",
+      "title": "Handoff folder",
+      "description": "Folder for handoffs, relative to the project root. Kept out of git via .git/info/exclude.",
+      "default": ".handoffs"
+    },
+    "handoff_word_budget": {
+      "type": "number",
+      "title": "Handoff word budget",
+      "description": "Target handoff length in words; over 1.2x this is flagged.",
+      "default": 600
+    }
+  }
 }

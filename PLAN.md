@@ -43,7 +43,7 @@
 | One threshold ("6% left") | **Warn at 15% left, pause at 6% left, gate shortly after** (all configurable) | A warning lets Claude steer toward a natural break before the hard pause. |
 | "Notify Claude" | **Notice appended to the next tool result, or a one-time Stop block** | Claude can't be interrupted mid-generation. Tool boundaries are the natural checkpoints. |
 | Claude "pauses" | **Grace window (≈5 tool calls or +3 points), then non-handoff tools are refused** | Instructions alone are best-effort. The gate makes the stop reliable without leaving files half-edited. |
-| "Produce a handoff doc" | **Handoff doc plus a resume prompt the mod builds**: in Claude's last message (copyable code block), at the top of the handoff, and via `/auto-pause:status` | You paste one block into a new session. The prompt carries the absolute paths, so it works no matter how you open the session. |
+| "Produce a handoff doc" | **Handoff doc plus a resume prompt the mod builds**: in Claude's last message (copyable code block), at the top of the handoff, and via `/auto-pause-status` | You paste one block into a new session. The prompt carries the absolute paths, so it works no matter how you open the session. |
 | Fixed threshold | **Calibration log**: record how many % each handoff actually cost, and suggest a threshold | Pro windows are small. 6% may be too little or too much depending on context size. |
 
 ### Out of scope / not worth building
@@ -77,7 +77,7 @@
 
 ## 3. Refined product spec
 
-**Name:** plugin `auto-pause`, skill `writing-handoffs`, command `/auto-pause:status`.
+**Name:** plugin `auto-pause`, skill `writing-handoffs`, command `/auto-pause-status`.
 
 ### Runtime flow (what you experience in Desktop)
 
@@ -116,7 +116,7 @@ Read only the files it points to unless you need more.
 It appears in three places:
 1. Claude's last message, in a fenced block, so it's copyable.
 2. The top of the handoff file.
-3. `/auto-pause:status`, which reprints the latest prompt for the current folder if you lost it.
+3. `/auto-pause-status`, which reprints the latest prompt for the current folder if you lost it.
 
 ### Recommended one-time setting (yours to set; a plugin can't)
 
@@ -151,7 +151,7 @@ Dev-only override for tests, evals, and Desktop smoke tests: `AUTO_PAUSE_SIMULAT
 | Component | Path | Job | Why this form |
 |---|---|---|---|
 | Manifest | `.claude-plugin/plugin.json` | Metadata and `userConfig` | Install-time config dialog. No settings edits. |
-| **Monitor/gate mod** | `hooks/hooks.json` → `hooks/register.ts` | Reads `session.measure`, runs the state machine, injects notices (with the handoff path and pre-built resume prompt), gates tools, blocks Stop once, validates handoffs on write, shows toasts, writes the calibration log, registers `/auto-pause:status` | Deterministic. Pushed data. One file. Unit-testable offline. |
+| **Monitor/gate mod** | `hooks/hooks.json` → `hooks/register.ts` | Reads `session.measure`, runs the state machine, injects notices (with the handoff path and pre-built resume prompt), gates tools, blocks Stop once, validates handoffs on write, shows toasts, writes the calibration log, registers `/auto-pause-status` | Deterministic. Pushed data. One file. Unit-testable offline. |
 | **Handoff skill** | `skills/writing-handoffs/SKILL.md` | How to reach a safe point and write a resumable handoff | Judgment work belongs in a skill. It is also usable manually ("write a handoff"). |
 | Template | inlined in `skills/writing-handoffs/SKILL.md` | The section structure | A separate file costs one extra Read turn at pause time (Phase 1 decision) |
 | Facts script | `skills/writing-handoffs/scripts/facts.sh` | Manual path only: git state, handoff path, resume prompt. Always exits 0. | "Solve, don't punt". On the auto path the mod puts all of this in the notice. |
@@ -180,7 +180,7 @@ Rules: never switch model for the handoff (a model switch re-reads the whole his
 - Word count ≤ budget × 1.2.
 - No pasted code blocks over 15 lines.
 - No secret-looking strings (`sk-ant-`, `ghp_`, `AKIA`, `-----BEGIN`).
-- If all checks pass: mark the session PAUSED, release the gate and Stop block, toast "Handoff ready", log calibration `{pct_at_notice, pct_at_done, turns, context_tokens, model}`.
+- If all checks pass: mark the session PAUSED, release the gate and Stop block, log calibration `{pct_at_notice, pct_at_done, turns, context_tokens, model}`.
 
 ### Handoff template (sketch)
 
@@ -298,18 +298,18 @@ metadata:
 |---|---|---|---|---|
 | **0. Desktop spike** | Kill the remaining unknowns before building | 1. Check which Claude Code version the Desktop app runs. Mods docs describe v2.1.290+; the spike used 2.1.304. 2. Install a throwaway mod that logs every `session.measure` to a file. Confirm it loads in a Desktop **local** Code session. Compare the readings with Settings > Usage. 3. Confirm a `tool.call` `context` notice reaches Claude (ask it to echo a marker). 4. Confirm `classic.Stop` blocks once, `{deny}` works on a subagent call, and skill `allowed-tools` (or `tool.check`) prevents the Write permission prompt in your usual Desktop permission mode. 5. Confirm a toast renders in Desktop. Confirm the final message's code block is copyable. Confirm the macOS notification arrives when the turn ends while you're in another app. 6. Set `autoContinueAtUsageLimit: false`. This can't be tested without hitting the limit, so don't. | A written yes/no for each item. **If 2 fails** (old version, org policy, or empty `rateLimits` on your plan), see §9. | 30–45 min, 1 session |
 | **1. Handoff skill (evals first)** | A handoff plus resume prompt that a fresh session can resume from cold | 1. Write 3 eval scenarios (§7 E1–E3) *before* the skill. Get a baseline with no skill. 2. Draft SKILL.md, template, and `facts.sh` with the **skill-creator** skill. Review against §5. 3. Claude A/B loop: paste each resume prompt into a fresh session. Fix what it trips on. | E1–E3 beat baseline. The new session does Next step 1 with no clarifying questions. Triggering ≥ 9/10, false triggers 0/5. | 1 session |
-| **2. Monitor/gate mod** | Reliable warn → pause → gate → paused, with resume prompt | State machine, notices, resume-prompt builder (absolute paths), grace counter, gate allowlist, subagent handling, Stop-once, handoff validation, toasts, calibration log, `/auto-pause:status`, `.git/info/exclude` entry, `.catch` on gating hooks (fail open: a mod bug must never brick a session). Unit tests per transition, including multi-window, reset, and simulated values. | All state-transition tests green. `claude plugin validate` shows no warnings. Desktop smoke test with the simulate env var produces a valid handoff and a copyable resume prompt. | 1–2 sessions |
+| **2. Monitor/gate mod** | Reliable warn → pause → gate → paused, with resume prompt | State machine, notices, resume-prompt builder (absolute paths), grace counter, gate allowlist, subagent handling, Stop-once, handoff validation, toasts, calibration log, `/auto-pause-status`, `.git/info/exclude` entry, `.catch` on gating hooks (fail open: a mod bug must never brick a session). Unit tests per transition, including multi-window, reset, and simulated values. | All state-transition tests green. `claude plugin validate` shows no warnings. Desktop smoke test with the simulate env var produces a valid handoff and a copyable resume prompt. | 1–2 sessions |
 | **3. End-to-end evals and calibration** | Prove it on real behavior; tune defaults | 1. `claude plugin eval` with the simulate env var and `context.history_file` mid-task transcripts (E4–E6). 2. Compare skill-invoke vs. inlined-template turn cost. Keep the cheaper one. 3. Use it in Desktop for a week of normal work. 4. Set `pause_at_percent_left` = p95(handoff cost) + 2 points. | Evals pass at ≥ 2/3 runs per case. ≥ 3 real pauses logged. Defaults updated with the measured numbers. | 1 session + a week of normal use |
 | **4. Package and ship** | Installable on any Mac | `marketplace.json` and README. README install steps: `claude plugin marketplace add k45sle/Claude-auto-pause` in Terminal (settings are shared with Desktop), then Desktop **+ → Add plugins → auto-pause → User**. Also the recommended setting, config table, limitations, uninstall. Version 0.1.0. | Clean install on a second Mac or user account works in Desktop. | < 1 session |
 | *(v1.1 option)* | Same flow for context-window exhaustion | Trigger the same handoff when `context.percent` ≥ ~85%, instead of losing detail to auto-compact | — | small |
 
-Phase results: [Phase 0](docs/phase0-results.md), [Phase 1](docs/phase1-results.md).
+Phase results: [Phase 0](docs/phase0-results.md), [Phase 1](docs/phase1-results.md), [Phase 2](docs/phase2-results.md).
 
 ---
 
 ## 7. Testing and eval strategy (no deliberate quota burning)
 
-**Offline unit tests (`claude plugin test`, free).** Fire `$.session.measure(...)` with simulated readings, then `$.tool.call(...)` / `$.classic.Stop(...)` / `$.command.run({ command: 'auto-pause:status' })`, and assert on `context`, `deny`, `block`, the resume-prompt text, and toasts. This pattern is already proven by the spike. Use `mock.env` for config. Cover: below warn; warn once; pause once; grace countdown; gate; subagent deny; Stop blocks once then releases; valid and invalid handoff; window reset; weekly-only binding; empty `rateLimits` (API key, Team); resume prompt has absolute paths and survives spaces in folder names.
+**Offline unit tests (`claude plugin test`, free).** Fire `$.session.measure(...)` with simulated readings, then `$.tool.call(...)` / `$.classic.Stop(...)` / `$.command.run({ command: 'auto-pause-status' })`, and assert on `context`, `deny`, `block`, the resume-prompt text, and toasts. This pattern is already proven by the spike. Use `mock.env` for config. Cover: below warn; warn once; pause once; grace countdown; gate; subagent deny; Stop blocks once then releases; valid and invalid handoff; window reset; weekly-only binding; empty `rateLimits` (API key, Team); resume prompt has absolute paths and survives spaces in folder names.
 
 **Evals (`claude plugin eval`, cost quota, so keep ~6 cases × 3 runs):**
 
@@ -322,7 +322,7 @@ Phase results: [Phase 0](docs/phase0-results.md), [Phase 1](docs/phase1-results.
 | E5 | Should-trigger set (10 paraphrases) / should-not set (5: changelog, PR description, summary of finished work…) | skill loaded / not loaded |
 | E6 | Baseline arm (no plugin, same prompts) | `--ablation with-without` delta |
 
-**Real-world check (Phase 3):** don't consume quota on purpose. Let pauses happen during normal Desktop work and read the calibration log (`/auto-pause:status`).
+**Real-world check (Phase 3):** don't consume quota on purpose. Let pauses happen during normal Desktop work and read the calibration log (`/auto-pause-status`).
 
 ---
 
