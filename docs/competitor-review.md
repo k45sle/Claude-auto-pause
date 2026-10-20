@@ -2,11 +2,17 @@
 
 Source-level comparison of the plugins named in the October 2026 originality research. The repos were cloned and read; none of their code was run. Line references are to each repo's default branch on 2026-10-20.
 
-## Verdict
+## TL;DR
 
-None of the reviewed plugins does all of this together: plan-usage trigger, a tool gate that stays shut until a checked handoff exists, a manual resume in a fresh session, and the official `session.measure` feed that works in the Desktop Code tab. Each piece exists somewhere. auto-pause should be described as an enforced, checked handoff before the usage limit, not as the first usage guard or the first handoff plugin.
+None of the plugins we read does everything auto-pause does, though each single feature exists somewhere. auto-pause puts them together: it reads your real plan usage (through Claude Code's official `session.measure` feed, which also works in the Desktop app), locks Claude's tools until it has written a note, checks that note, and leaves starting the new chat to you. So we call it a checked handoff before the usage limit, and never the first usage guard or the first handoff plugin.
 
-Claude Code itself has three nearby features: `autoContinueAtUsageLimit` (waits and continues the same session), a warning since 2.1.304 when resuming an inactive conversation would use a noticeable share of the 5-hour limit, and a Desktop handoff to a nested session that starts when the context fills and you click a button. None of them is triggered by plan usage or writes a handoff. If Desktop's handoff gets a usage trigger, most of this plugin becomes redundant.
+Claude Code has three related features of its own. None of them reacts to plan usage or writes a note:
+
+- `autoContinueAtUsageLimit` waits at the limit and then carries on in the same chat.
+- Since 2.1.304, it warns you when reopening an old chat would use a big share of your 5-hour limit.
+- The Desktop app can hand off to a new chat when the current one gets too long, after you click a button.
+
+If the Desktop handoff ever starts on usage instead, most of this plugin becomes unnecessary.
 
 ## Closest plugins
 
