@@ -31,4 +31,7 @@ ok "$(has "$out" '  ?? web/résumé.md')" "repo-root unescaped path"; ok "$([ "$
 
 d=$(mk none); out=$(cd "$d" && bash "$S" job .handoffs)
 ok "$(has "$(pathof "$out")" "$d/.handoffs/")" "non-git path"; ok "$(has "$out" 'git: not a repository')" "non-git line"
+chk=$(grep -F 'Check that `git status` and HEAD match' "$S" | sed -n "s/^ *check='\(.*\)'\$/\1/p")
+for f in "$(dirname "$0")/register.ts" "$(dirname "$0")/../skills/writing-handoffs/references/fallback.md"; do
+  ok "$([ -n "$chk" ] && grep -qF -- "$chk" "$f" && echo 1)" "resume check sentence matches $(basename "$f")"; done
 [ "$fail" = 0 ] && echo "facts.selfcheck: all passed"; exit "$fail"

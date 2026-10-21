@@ -137,6 +137,9 @@ async function pauseNotice($: any): Promise<{ notice: string; path: string; prom
   return { notice, path, prompt }
 }
 
+const gated = async ($: any) => { const p = await pauseNotice($); await $.session.measure(reading(98)); return p }
+const status = async ($: any, args = '') => (await $.command.run({ command: 'auto-pause-status', args })).text as string
+
 describe('thresholds', () => {
   test('below warn injects nothing', async ($, on) => {
     world(on); await start($)
@@ -211,8 +214,8 @@ describe('thresholds', () => {
   test('status shows the pending prompt while pausing', async ($, on) => {
     world(on); await start($)
     const { prompt } = await pauseNotice($)
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('pausing now, not written yet')
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain(prompt)
+    expect((await status($))).toContain('pausing now, not written yet')
+    expect((await status($))).toContain(prompt)
   })
 
   test('a reset after a warning alone returns to normal and warns again', async ($, on) => {
@@ -242,7 +245,7 @@ describe('thresholds', () => {
     world(on); await start($)
     await $.session.measure({ context: { window: 200000 }, rateLimits: [], changed: ['context'] })
     expect(ctx(await $.tool.call(bash))).toBe('')
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('No usage data yet. It arrives with Claude\'s first reply on a Pro or Max plan')
+    expect((await status($))).toContain('No usage data yet. It arrives with Claude\'s first reply on a Pro or Max plan')
   })
 
   test('the no-data toast fires once', async ($, on) => {
@@ -254,13 +257,13 @@ describe('thresholds', () => {
 
   test('simulate env var pauses from session start', async ($, on) => {
     world(on, { AUTO_PAUSE_SIMULATE_PERCENT_LEFT: '6' }); await start($)
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('5-hour usage 94% used (6% left), reset time unknown')
+    expect((await status($))).toContain('5-hour usage 94% used (6% left), reset time unknown')
     const { path, prompt } = await pauseNotice($)
     expect(path).toContain('/.handoffs/')
     expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))).toContain('handoff OK')
-    const status = (await $.command.run({ command: 'auto-pause-status', args: '' })).text!
-    expect(status).toContain('State: paused (simulated 6% left)')
-    expect(status).not.toContain('Calibration')
+    const text = await status($)
+    expect(text).toContain('State: paused (simulated 6% left)')
+    expect(text).not.toContain('Calibration')
   })
   test('simulate after N calls lands mid-task, on main or subagent calls', async ($, on) => {
     world(on, { EVAL_AUTO_PAUSE_SIMULATE_PERCENT_LEFT: '6', EVAL_AUTO_PAUSE_SIMULATE_AFTER_CALLS: '2' }); await start($)
@@ -346,11 +349,11 @@ describe('handoff validation', () => {
     expect(ctx(r)).toContain('AUTO-PAUSE: handoff OK')
     expect((await $.tool.call(bash)).deny).toBeUndefined()
     expect((await $.classic.Stop({ stop_hook_active: false })).block).toBeUndefined()
-    const status = (await $.command.run({ command: 'auto-pause-status', args: '' })).text!
-    expect(status).toContain('State: paused')
-    expect(status).toContain(prompt)
-    expect(status).toContain('Calibration: 1 pause(s): 1 verified, 0 facts-only, 0 released, 0 reset before a handoff.')
-    expect(status).toContain('Handoff cost p95 2 points. Suggested pause_at_percent_left: 4.')
+    const text = await status($)
+    expect(text).toContain('State: paused')
+    expect(text).toContain(prompt)
+    expect(text).toContain('Calibration: 1 pause(s): 1 verified, 0 facts-only, 0 released, 0 reset before a handoff.')
+    expect(text).toContain('Handoff cost p95 2 points. Suggested pause_at_percent_left: 4.')
   })
 
   test('an invalid handoff gets a fix list and keeps the gate', async ($, on) => {
@@ -455,7 +458,7 @@ describe('windows', () => {
     await pauseNotice($)
     await $.session.measure(reading(3, 'five_hour', NEXT_RESETS))
     expect((await $.tool.call(bash)).deny).toBeUndefined()
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('State: normal')
+    expect((await status($))).toContain('State: normal')
     await $.session.measure(reading(95, 'five_hour', NEXT_RESETS))
     expect(ctx(await $.tool.call(bash))).toContain('pause threshold reached')
   })
@@ -479,7 +482,7 @@ describe('refinements from the competitor review', () => {
     }
     world(on, {}, true, { 'session:unknown': saved }); await start($)
     expect((await $.tool.call(bash)).deny).toContain('AUTO-PAUSE gate')
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('State: gated')
+    expect((await status($))).toContain('State: gated')
   })
 
   test('state is saved after each change', async ($, on) => {
@@ -528,7 +531,7 @@ describe('refinements from the competitor review', () => {
     for (let i = 0; i < 2; i++) expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: '# nothing' } as never))).toContain('needs fixes')
     expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: '# nothing' } as never))).toContain('The gate is open anyway')
     expect((await $.tool.call(bash)).deny).toBeUndefined()
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('1 released')
+    expect((await status($))).toContain('1 released')
   })
 
   test('a second Stop without a handoff writes the facts-only one and notifies', async ($, on) => {
@@ -544,7 +547,7 @@ describe('refinements from the competitor review', () => {
     expect(text).toContain(`Read ${path} first.`)
     expect(w.notes[0]).toContain(path)
     expect((await $.tool.call(bash)).deny).toBeUndefined()
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('1 facts-only')
+    expect((await status($))).toContain('1 facts-only')
   })
 
   test('a failed facts-only write still opens the gate', async ($, on) => {
@@ -574,9 +577,9 @@ describe('refinements from the competitor review', () => {
     const facts = path.replace(/\.md$/, '-facts.md')
     expect(w.files.get(path)).toBe('# Handoff: half')
     expect(w.files.get(facts)).toContain(`Read ${facts} first.`)
-    const status = (await $.command.run({ command: 'auto-pause-status', args: '' })).text!
-    expect(status).toContain(facts)
-    expect(status).not.toContain(prompt)
+    const text = await status($)
+    expect(text).toContain(facts)
+    expect(text).not.toContain(prompt)
   })
 
   test('hitting the limit before any pause writes a facts-only handoff', async ($, on) => {
@@ -585,7 +588,7 @@ describe('refinements from the competitor review', () => {
     await $.classic.StopFailure({ error: 'rate_limit' } as never)
     const written = [...w.files.keys()].find(k => k.includes('/.handoffs/'))!
     expect(w.files.get(written)).toContain('The usage limit was hit before the handoff was written.')
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('State: paused')
+    expect((await status($))).toContain('State: paused')
   })
 
   test('other StopFailure errors do nothing', async ($, on) => {
@@ -598,7 +601,7 @@ describe('refinements from the competitor review', () => {
   test('a reading whose reset time has passed is ignored', async ($, on) => {
     world(on); await start($)
     const r = await $.session.measure(reading(97, 'five_hour', '2026-10-19T12:00:00.000Z'))
-    expect(r).toBeDefined()
+    expect(r).toEqual({ changed: ['rateLimits'] })
     expect(ctx(await $.tool.call(bash))).toBe('')
   })
 
@@ -607,17 +610,17 @@ describe('refinements from the competitor review', () => {
     await pauseNotice($)
     await $.session.measure(reading(98))
     expect((await $.tool.call(bash)).deny).toContain('AUTO-PAUSE gate')
-    expect((await $.command.run({ command: 'auto-pause-status', args: 'release' })).text).toContain('Gate released by you')
+    expect((await status($, 'release'))).toContain('Gate released by you')
     expect((await $.tool.call(bash)).deny).toBeUndefined()
-    expect((await $.command.run({ command: 'auto-pause-status', args: 'release' })).text).toBe('Nothing to release.')
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('1 released')
+    expect((await status($, 'release'))).toBe('Nothing to release.')
+    expect((await status($))).toContain('1 released')
   })
 
   test('a reset during a pause is logged as an outcome', async ($, on) => {
     world(on); await start($)
     await pauseNotice($)
     await $.session.measure(reading(10, 'five_hour', NEXT_RESETS))
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('1 reset before a handoff')
+    expect((await status($))).toContain('1 reset before a handoff')
   })
 })
 
@@ -669,8 +672,8 @@ describe('review fixes', () => {
   test('releasing before any handoff exists leaves no resume prompt pointing nowhere', async ($, on) => {
     world(on); await start($)
     await pauseNotice($)
-    await $.command.run({ command: 'auto-pause-status', args: 'release' })
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).not.toContain('Resume prompt:')
+    await status($, 'release')
+    expect((await status($))).not.toContain('Resume prompt:')
   })
 
   test('a new session id starts from a clean state', async ($, on) => {
@@ -679,7 +682,7 @@ describe('review fixes', () => {
     w.id.value = 'second-session'
     await start($)
     expect((await $.tool.call(bash)).deny).toBeUndefined()
-    expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('State: normal')
+    expect((await status($))).toContain('State: normal')
   })
 })
 
@@ -792,7 +795,6 @@ describe('snapshot accuracy', () => {
 })
 
 describe('abuse and misconfiguration', () => {
-  const gated = async ($: any) => { const p = await pauseNotice($); await $.session.measure(reading(98)); return p }
 
   test('git commands spelled around the check stay gated', async ($, on) => {
     world(on); await start($); await gated($)
@@ -840,6 +842,20 @@ describe('abuse and misconfiguration', () => {
     expect([...w.files.keys()].some(k => k.includes('--path-format'))).toBe(false)
   })
 
+  test('session start prunes stores older than 8 days and keeps recent ones', async ($, on) => {
+    const now = Date.parse('2026-10-19T15:02:00Z')
+    const w = world(on, {}, true, { 'session:old': { at: now - 9 * 24 * 3600e3 }, 'session:recent': { at: now - 3600e3 } }); await start($)
+    expect(w.store.has('session:old')).toBe(false)
+    expect(w.store.has('session:recent')).toBe(true)
+  })
+
+  for (const bad of ['-x/info/exclude\n', 'a\nb\n'])
+    test(`a git exclude path ${JSON.stringify(bad)} writes nothing`, async ($, on) => {
+      const w = world(on); w.exclude.value = bad; await start($); await pauseNotice($)
+      expect([...w.files.keys()].filter(k => /exclude/.test(k))).toEqual([`${ROOT}/.git/info/exclude`])
+      expect(w.files.get(`${ROOT}/.git/info/exclude`)).toBe('# git ls-files --others --exclude-from=.git/info/exclude\n')
+    })
+
   test('out-of-range settings fall back to the defaults', { options: { pause_at_percent_left: 500, warn_at_percent_left: -5, gate_after_points: 0, handoff_word_budget: 0 } }, async ($, on) => {
     world(on); await start($)
     await $.session.measure(reading(86))
@@ -852,8 +868,6 @@ describe('abuse and misconfiguration', () => {
 })
 
 describe('hardening', () => {
-  const gated = async ($: any) => { const p = await pauseNotice($); await $.session.measure(reading(98)); return p }
-  const status = async ($: any, args = '') => (await $.command.run({ command: 'auto-pause-status', args })).text as string
   const prompt = (path: string) => `Resume paused work in ${ROOT}.\nRead ${path} first. It is your only context from the previous session.\nCheck that \`git status\` and HEAD match its "Repo state" section (if not, tell the user before editing). Run the commands under "Verify" and each "check with" command under "Outside operations", and tell the user if a result differs from the recorded one, then start with Next step 1.\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.\nIf the user tells you something in this session that differs from the handoff, follow the user.`
   const p2 = (n: number) => String(n).padStart(2, '0')
   const stampNow = () => { const d = new Date(Date.parse('2026-10-19T15:02:00Z')); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}${p2(d.getMinutes())}` }
