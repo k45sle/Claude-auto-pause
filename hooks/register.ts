@@ -24,15 +24,18 @@ const SECRETS = [
   /\bAIza[0-9A-Za-z_-]{35}\b/,
   /authorization\s*[:=]\s*(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}/i,
   /\b[a-z][a-z0-9+.-]{1,20}:\/\/[^\s:@/]+:[^\s@/]+@/i, // any scheme://user:pass@
-  // NAME=value, NAME: value, "NAME": "value" anywhere on a line (env, YAML, .mcp.json, code). A `:` value must be quoted
-  // or hold a digit, so prose like "GITHUB_TOKEN: expired" passes. Word-start lookbehind and capped runs keep it linear.
-  // `_PASS` does not match BYPASS.
-  /(?<![\w$])[A-Z][A-Z0-9_]{0,60}?(?:TOKEN|SECRET|PASSWORD|PASSWD|_PASS|API_KEY|PRIVATE_KEY)[A-Z0-9_]{0,40}['"]?[ \t]*(?:=[ \t]*['"]?|:[ \t]*['"]|:[ \t]*(?=[^\s'"]*\d))[^\s'"$<{]{8,}/,
+  // NAME=value, NAME: value, "NAME": "value", env["NAME"] = value anywhere on a line (env, YAML, .mcp.json, code).
+  // A `:` value must be quoted or hold a digit, so prose like "GITHUB_TOKEN: expired" passes. The name is read once and
+  // the lookahead checks it holds a keyword, which keeps it linear. `_PASS` does not match BYPASS.
+  /(?<![\w$])(?=[A-Z0-9_]*?(?:TOKEN|SECRET|PASSWORD|PASSWD|_PASS|API_KEY|PRIVATE_KEY))[A-Z0-9_]+['"]?\]?[ \t]*(?:=[ \t]*['"]?(?!process\.env|os\.environ)(?![^\s'"]{0,200}\()|:[ \t]*['"]|:[ \t]*(?=[^\s'"]{0,200}\d)(?=[^\s'"]{0,200}[A-Za-z])(?![^\s'"]{0,200}\())[^\s'"$<{*]{8,}/,
   /glpat-[A-Za-z0-9_-]{20,}/,
   /\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}/,
   /\beyJ[\w-]{10,}\.eyJ[\w-]{10,}\.[\w-]{10,}/,
   /_authToken\s*=\s*[^\s'"]{8,}/,
-  /"[\w-]*(?:password|passwd|secret|api_?key|token)"\s*:\s*"(?![<${])[^"\s]{8,}"/i, // a key that ends in one: "github_token", "clientSecret"
+  // Any case, name ending in the word: notion_token: "...", notionSecret = '...', "x-api-key": "...", ?api_key=...
+  // A value must be quoted, or (when the name has more than the bare word, or follows ? or & in a URL) hold a letter and
+  // a digit and no call, so prose like "token: expired" and code like `token = getToken2()` pass.
+  /(?<![\w$-])(?:[\w-]+?(?:token|secret|password|passwd|_pass|api[_-]?key|secret_access_key|private_key)['"]?\]?[ \t]*[:=][ \t]*(?:['"](?![<${*])[^\s'"]{8,}|(?=[^\s'"]{0,200}\d)(?=[^\s'"]{0,200}[A-Za-z])(?![^\s'"]{0,200}\()(?!process\.env|os\.environ)[^\s'"$<{]{8,})|(?:token|secret|password|passwd|api[_-]?key|secret_access_key|private_key)['"]?\]?[ \t]*[:=][ \t]*['"](?![<${*])[^\s'"]{8,}|(?<=[?&])(?:token|secret|password|api[_-]?key)=(?=[^\s&'"]{0,200}\d)[^\s&'"$<{]{8,})/i,
 ]
 // Read-only git: what the handoff's Repo state needs (handoff-now's rule). An allowlist, not a
 // denylist: plain characters only (no quotes, braces, globs, $, pipes, redirects or line breaks),

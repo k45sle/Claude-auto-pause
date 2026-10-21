@@ -948,7 +948,11 @@ describe('hardening', () => {
     ['mcp.json supabase', '"SUPABASE_SERVICE_TOKEN": "sbp_0123456789abcdefghij"'], ['mcp.json notion', '"NOTION_TOKEN": "ntn_abcdefghijklmnop123"'],
     ['ts const', 'const NOTION_SECRET = "ntn_abcdefghijklmnop123"'], ['env mid-line', 'SUPABASE_SERVICE_TOKEN=sbp_0123456789abcdefghij'],
     ['spaced password', "CLIENT_PASSWORD = 'hunter2hunter2'"], ['postgres url', 'postgres://app:hunter2pass@db.example.com:5432/app'],
-    ['yaml', 'FOO_TOKEN: a1B2c3D4e5F6'], ['json suffix key', '{"github_token": "a1B2c3D4e5F6g7H8"}']] as const)
+    ['yaml', 'FOO_TOKEN: a1B2c3D4e5F6'], ['json suffix key', '{"github_token": "a1B2c3D4e5F6g7H8"}'],
+    ['os.environ', 'os.environ["NOTION_TOKEN"] = "ntn_abcdefghijklmnop123"'], ['lowercase yaml', 'notion_token: ntn_a1B2c3D4e5F6'],
+    ['camelCase', "const notionSecret = 'ntn_abcdefghijklmnop123'"], ['header key', '"x-api-key": "a1B2c3D4e5F6"'],
+    ['bare TOKEN', 'TOKEN=ntn_abcdefghijklmnop123'], ['long name', `GITHUB_TOKEN_${'X'.repeat(300)}=a1B2c3D4e5F6`],
+    ['query string', 'curl https://x.io/v1?api_key=a1B2c3D4e5F6'], ['aws credentials', 'aws_secret_access_key = a1B2c3D4e5F6g7H8']] as const)
     test(`${name} secrets are redacted from the appended facts`, async ($, on) => {
       const w = world(on); await start($)
       w.ask.value = `see ${secret} ok`
@@ -971,12 +975,12 @@ describe('hardening', () => {
 
   test('a long identifier redacts fast, and token-ish keys without secret values stay', async ($, on) => {
     const w = world(on); await start($)
-    w.ask.value = '"max_tokens": 4096, "tokenizer": "cl100k_base", GITHUB_TOKEN: ${{ secrets.GH }} GITHUB_TOKEN: expired "token": "<your-token-here>" ' + 'TOKEN'.repeat(10000)
+    w.ask.value = '"max_tokens": 4096, "tokenizer": "cl100k_base", GITHUB_TOKEN: ${{ secrets.GH }} GITHUB_TOKEN: expired "token": "<your-token-here>" token: 2026-10-21 const token = getToken() const apiToken = getToken2() "next_page_token": 12345678901 password: "********" GITHUB_TOKEN: 2026-10-21 ' + 'TOKEN'.repeat(10000) + ' ' + 'token'.repeat(10000) + ' ' + 'token=a'.repeat(20000) + ' ' + 'TOKEN=aaaaaaaaa'.repeat(10000)
     const { path, prompt: pr } = await pauseNotice($)
     const t = Date.now()
     await write($, path, handoff(pr))
     expect(Date.now() - t).toBeLessThan(100)
-    expect(w.files.get(path)).toContain('"max_tokens": 4096, "tokenizer": "cl100k_base", GITHUB_TOKEN: ${{ secrets.GH }} GITHUB_TOKEN: expired "token": "<your-token-here>"')
+    expect(w.files.get(path)).toContain('"max_tokens": 4096, "tokenizer": "cl100k_base", GITHUB_TOKEN: ${{ secrets.GH }} GITHUB_TOKEN: expired "token": "<your-token-here>" token: 2026-10-21 const token = getToken() const apiToken = getToken2() "next_page_token": 12345678901 password: "********" GITHUB_TOKEN: 2026-10-21')
   })
 
   test('a file name git quotes (a double quote) can be named and pass', async ($, on) => {
