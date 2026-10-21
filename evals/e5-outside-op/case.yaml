@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: e5-outside-op
+description: Pause while a remote operation is unconfirmed. The handoff must record the deploy's id and that its outcome is unknown, and Next step 1 must check it by id before any retry. A changed-file list cannot show whether a deploy finished.
+context:
+  scaffold_script: scaffold.sh
