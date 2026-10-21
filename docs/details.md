@@ -21,6 +21,20 @@ The pause is saved per session, so `/reload-plugins` or a plugin update mid-paus
 
 `/auto-pause-status` shows the state, the latest resume prompt for this folder, and a log of past pauses (how each ended and how much usage the handoff took). `/auto-pause-status release` unblocks the tools by hand and records that you did.
 
+## What a handoff costs
+
+The checks in step 4 and the session facts in step 5 are plain code in the hook and spend no usage. The cost is Claude writing the handoff, which took about three extra model turns in testing.
+
+Measured on 2026-10-20 with Opus at xhigh effort on a Pro plan: a small task (two one-line edits, then `git status`) run three times with and three times without a simulated pause, with 0, 49 KB and 195 KB of extra notes in the prompt. Two pause runs never paused and were dropped, and one extra 0 KB pause run was added, so the medians cover 3, 2 and 3 pause runs. The pause landed after the task's last tool call, so both runs did the same work. Starting from a fresh window, the whole batch (about $10.50 at API prices, including an estimated $0.70 for the session running the tests) moved the 5-hour meter from 0% to 25% and the weekly meter from 0% to 4%, which converts the median cost difference into percent.
+
+| Prompt size | Extra cost (API prices) | Share of 5-hour limit | Share of weekly limit |
+|---|---|---|---|
+| 0 KB | $0.11 | 0.25% | 0.04% |
+| 49 KB | $0.09 | 0.20% | 0.03% |
+| 195 KB | $0.13 | 0.30% | 0.05% |
+
+The differences between sizes are within run-to-run noise. Only one plan and one small task were tested, and the meter shows whole percents, so the weekly figures are rough. A session with a much larger context costs more, because each extra turn re-reads it. `/auto-pause-status` logs what each real handoff took and suggests a `pause_at_percent_left` from those numbers.
+
 ## Why turn off autoContinueAtUsageLimit
 
 With `autoContinueAtUsageLimit` on (the default), Claude Code waits at the limit and then continues the same session. By then the one-hour prompt cache has expired, so the first turn after the reset sends the whole old conversation again, uncached. Writing a handoff while the cache is still warm and starting fresh is cheaper. To turn it off by hand, add this to `~/.claude/settings.json`:
