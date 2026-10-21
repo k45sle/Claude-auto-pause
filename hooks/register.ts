@@ -24,13 +24,15 @@ const SECRETS = [
   /\bAIza[0-9A-Za-z_-]{35}\b/,
   /authorization\s*[:=]\s*(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}/i,
   /\b[a-z][a-z0-9+.-]{1,20}:\/\/[^\s:@/]+:[^\s@/]+@/i, // any scheme://user:pass@
-  // [ \t], not \s: with the m flag `^\s*` is quadratic on long runs of newlines. `_PASS` does not match BYPASS.
-  /^[ \t]*(?:export[ \t]+)?[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|_PASS|API_KEY|PRIVATE_KEY)[A-Z0-9_]*[ \t]*=[ \t]*['"]?[^\s'"$<{]{8,}/m,
+  // NAME=value, NAME: value, "NAME": "value" anywhere on a line (env, YAML, .mcp.json, code). A `:` value must be quoted
+  // or hold a digit, so prose like "GITHUB_TOKEN: expired" passes. Word-start lookbehind and capped runs keep it linear.
+  // `_PASS` does not match BYPASS.
+  /(?<![\w$])[A-Z][A-Z0-9_]{0,60}?(?:TOKEN|SECRET|PASSWORD|PASSWD|_PASS|API_KEY|PRIVATE_KEY)[A-Z0-9_]{0,40}['"]?[ \t]*(?:=[ \t]*['"]?|:[ \t]*['"]|:[ \t]*(?=[^\s'"]*\d))[^\s'"$<{]{8,}/,
   /glpat-[A-Za-z0-9_-]{20,}/,
   /\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}/,
   /\beyJ[\w-]{10,}\.eyJ[\w-]{10,}\.[\w-]{10,}/,
   /_authToken\s*=\s*[^\s'"]{8,}/,
-  /"(?:password|passwd|secret|api_?key|access_?token)"\s*:\s*"[^"\s]{8,}"/i,
+  /"[\w-]*(?:password|passwd|secret|api_?key|token)"\s*:\s*"(?![<${])[^"\s]{8,}"/i, // a key that ends in one: "github_token", "clientSecret"
 ]
 // Read-only git: what the handoff's Repo state needs (handoff-now's rule). An allowlist, not a
 // denylist: plain characters only (no quotes, braces, globs, $, pipes, redirects or line breaks),

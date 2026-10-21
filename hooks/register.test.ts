@@ -943,7 +943,12 @@ describe('hardening', () => {
   for (const [name, secret] of [
     ['gitlab', 'glpat-a1B2c3D4e5F6g7H8i9J0'], ['stripe', 'sk_live_a1B2c3D4e5F6g7H8'], ['jwt', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghij1234'],
     ['npm', '//registry.npmjs.org/:_authToken=abcd1234efgh5678'], ['json', '{"password": "hunter2hunter2"}'], ['db pass', '\nDB_PASS=hunter2hunter2'],
-    ['https url', 'https://deploy:hunter2pass@git.example.com'], ['passwd', '\nMYSQL_PASSWD=hunter2hunter2']] as const)
+    ['https url', 'https://deploy:hunter2pass@git.example.com'], ['passwd', '\nMYSQL_PASSWD=hunter2hunter2'],
+    // From a reddit report: .mcp.json env blocks and code lines got past the start-of-line and whole-key patterns.
+    ['mcp.json supabase', '"SUPABASE_SERVICE_TOKEN": "sbp_0123456789abcdefghij"'], ['mcp.json notion', '"NOTION_TOKEN": "ntn_abcdefghijklmnop123"'],
+    ['ts const', 'const NOTION_SECRET = "ntn_abcdefghijklmnop123"'], ['env mid-line', 'SUPABASE_SERVICE_TOKEN=sbp_0123456789abcdefghij'],
+    ['spaced password', "CLIENT_PASSWORD = 'hunter2hunter2'"], ['postgres url', 'postgres://app:hunter2pass@db.example.com:5432/app'],
+    ['yaml', 'FOO_TOKEN: a1B2c3D4e5F6'], ['json suffix key', '{"github_token": "a1B2c3D4e5F6g7H8"}']] as const)
     test(`${name} secrets are redacted from the appended facts`, async ($, on) => {
       const w = world(on); await start($)
       w.ask.value = `see ${secret} ok`
@@ -951,7 +956,7 @@ describe('hardening', () => {
       await write($, path, handoff(pr))
       const text = w.files.get(path)!
       expect(text).toContain('[redacted]')
-      expect(text).not.toMatch(/a1B2c3D4|hunter2|abcd1234efgh|eyJzdWIi/)
+      expect(text).not.toMatch(/a1B2c3D4|hunter2|abcd1234efgh|eyJzdWIi|sbp_0123|ntn_abcd/)
     })
 
   test('a long run of newlines redacts fast, and BYPASS_CACHE is not a secret', async ($, on) => {
@@ -962,6 +967,16 @@ describe('hardening', () => {
     await write($, path, handoff(pr))
     expect(Date.now() - t).toBeLessThan(100)
     expect(w.files.get(path)).toContain('BYPASS_CACHE=truevalue123')
+  })
+
+  test('a long identifier redacts fast, and token-ish keys without secret values stay', async ($, on) => {
+    const w = world(on); await start($)
+    w.ask.value = '"max_tokens": 4096, "tokenizer": "cl100k_base", GITHUB_TOKEN: ${{ secrets.GH }} GITHUB_TOKEN: expired "token": "<your-token-here>" ' + 'TOKEN'.repeat(10000)
+    const { path, prompt: pr } = await pauseNotice($)
+    const t = Date.now()
+    await write($, path, handoff(pr))
+    expect(Date.now() - t).toBeLessThan(100)
+    expect(w.files.get(path)).toContain('"max_tokens": 4096, "tokenizer": "cl100k_base", GITHUB_TOKEN: ${{ secrets.GH }} GITHUB_TOKEN: expired "token": "<your-token-here>"')
   })
 
   test('a file name git quotes (a double quote) can be named and pass', async ($, on) => {
