@@ -240,8 +240,8 @@ function usage(kind: Kind, used: number, resetsAt?: string) {
 // Same text as skills/writing-handoffs/scripts/facts.sh prints, so manual handoffs can be checked against it.
 function resumePrompt(root: string, path: string, inGit: boolean) {
   const check = inGit
-    ? 'Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing). Run the commands under "Verify" and tell the user if a result differs from the recorded one, then start with Next step 1.'
-    : 'Check its "Repo state" section. Run the commands under "Verify" and tell the user if a result differs from the recorded one, then start with Next step 1.'
+    ? 'Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing). Run the commands under "Verify" and each "check with" command under "Outside operations", and tell the user if a result differs from the recorded one, then start with Next step 1.'
+    : 'Check its "Repo state" section. Run the commands under "Verify" and each "check with" command under "Outside operations", and tell the user if a result differs from the recorded one, then start with Next step 1.'
   return `Resume paused work in ${root}.\nRead ${path} first. It is your only context from the previous session.\n${check}\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.\nIf the user tells you something in this session that differs from the handoff, follow the user.`
 }
 

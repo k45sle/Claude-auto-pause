@@ -40,10 +40,10 @@ if [ "$in_git" = 1 ]; then
   echo "HEAD: $(G log -1 --format='%h %s' 2>/dev/null || echo '(no commits)')"
   echo "uncommitted:"; G status --short 2>/dev/null | sed 's/^/  /'
   echo "stashes: $(G stash list 2>/dev/null | wc -l | tr -d ' ')"
-  check='Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing). Run the commands under "Verify" and tell the user if a result differs from the recorded one, then start with Next step 1.'
+  check='Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing). Run the commands under "Verify" and each "check with" command under "Outside operations", and tell the user if a result differs from the recorded one, then start with Next step 1.'
 else
   echo "git: not a repository"
-  check='Check its "Repo state" section. Run the commands under "Verify" and tell the user if a result differs from the recorded one, then start with Next step 1.'
+  check='Check its "Repo state" section. Run the commands under "Verify" and each "check with" command under "Outside operations", and tell the user if a result differs from the recorded one, then start with Next step 1.'
 fi
 cat <<PROMPT
 resume prompt:
