@@ -24,6 +24,7 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   const tracked = { value: '' } // git ls-files -- <handoff folder>
   const runs: string[] = [] // every git argv, as run
   const toasts: string[] = []
+  const failWrite = { value: '' } // fs.write throws for this path
   mock.clock(on, { now: Date.parse('2026-10-19T15:02:00Z') })
   // A store the test can read back, so saved state can be checked.
   const kv = new Map<string, unknown>(Object.entries(store))
@@ -57,7 +58,10 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
     if (t === undefined) throw new Error(`missing ${e.path}`)
     return { value: t }
   })
-  on('fs.write', ($, e) => (files.set(e.path, e.text), { value: undefined }))
+  on('fs.write', ($, e) => {
+    if (e.path === failWrite.value) throw new Error('EIO')
+    return files.set(e.path, e.text), { value: undefined }
+  })
   // links: path -> where it leads; '' = a dangling link, which a resolving stat rejects (as a real one would).
   // A path exists when it is a file, a link, or a folder holding a file.
   on('fs.stat', ($, e) => {
@@ -86,7 +90,7 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   on('ui.notify', ($, e) => (notes.push(e.text), { value: { isSent: true, channel: 'test' } }) as never)
   on('session.id', () => ({ value: id.value }))
   on('ui.toast', ($, e) => (toasts.push(e.text), { value: undefined }) as never)
-  return { files, calls, notes, store: kv, head, ask, id, status, exclude, links, top, config, tracked, runs, toasts }
+  return { files, calls, notes, store: kv, head, ask, id, status, exclude, links, top, config, tracked, runs, toasts, failWrite }
 }
 
 const reading = (used: number, kind = 'five_hour', resetsAt = RESETS) => ({
@@ -543,6 +547,24 @@ describe('refinements from the competitor review', () => {
     expect((await $.command.run({ command: 'auto-pause-status', args: '' })).text).toContain('1 facts-only')
   })
 
+  test('a failed facts-only write still opens the gate', async ($, on) => {
+    const w = world(on); await start($)
+    const { path } = await pauseNotice($)
+    w.failWrite.value = path
+    await $.classic.Stop({ stop_hook_active: false })
+    await $.classic.Stop({ stop_hook_active: true })
+    expect((await $.tool.call(bash)).deny).toBeUndefined()
+  })
+
+  test('harmless secret-named lines pass, a real token is still flagged', async ($, on) => {
+    world(on); await start($)
+    const { path, prompt } = await pauseNotice($)
+    const ok = 'TOKEN_PATH=/home/me/tok.json\nAPI_KEY_FILE=./secrets/key.txt\nGITHUB_TOKEN_SCOPES=repo,workflow\nPASSWORD_MIN_LENGTH=12345678'
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt, ok) } as never))).not.toContain('secret-looking')
+    const bad = `GITHUB_TOKEN=ghp_${'a1B2'.repeat(9)}`
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt, bad) } as never))).toContain('secret-looking')
+  })
+
   test('a partial handoff from Claude is kept and the facts go beside it', async ($, on) => {
     const w = world(on); await start($)
     const { path, prompt } = await pauseNotice($)
@@ -951,7 +973,7 @@ describe('hardening', () => {
     ['yaml', 'FOO_TOKEN: a1B2c3D4e5F6'], ['json suffix key', '{"github_token": "a1B2c3D4e5F6g7H8"}'],
     ['os.environ', 'os.environ["NOTION_TOKEN"] = "ntn_abcdefghijklmnop123"'], ['lowercase yaml', 'notion_token: ntn_a1B2c3D4e5F6'],
     ['camelCase', "const notionSecret = 'ntn_abcdefghijklmnop123'"], ['header key', '"x-api-key": "a1B2c3D4e5F6"'],
-    ['bare TOKEN', 'TOKEN=ntn_abcdefghijklmnop123'], ['long name', `GITHUB_TOKEN_${'X'.repeat(300)}=a1B2c3D4e5F6`],
+    ['bare TOKEN', 'TOKEN=ntn_abcdefghijklmnop123'], ['long name', `GITHUB_${'X'.repeat(300)}_TOKEN=a1B2c3D4e5F6`],
     ['query string', 'curl https://x.io/v1?api_key=a1B2c3D4e5F6'], ['aws credentials', 'aws_secret_access_key = a1B2c3D4e5F6g7H8']] as const)
     test(`${name} secrets are redacted from the appended facts`, async ($, on) => {
       const w = world(on); await start($)
