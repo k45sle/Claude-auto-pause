@@ -9,7 +9,7 @@ type $ = EngineInterface
 type Phase = 'normal' | 'warned' | 'pausing' | 'gated' | 'paused'
 type Kind = 'five_hour' | 'seven_day'
 type Outcome = 'verified' | 'fallback' | 'released' | 'reset'
-type Calibration = { at: string; kind: Kind; usedAtNotice: number; usedAtDone: number; toolCalls: number; contextTokens?: number; model?: string; outcome?: Outcome; denials?: number; fixes?: number }
+type Calibration = { usedAtNotice: number; usedAtDone: number; outcome?: Outcome }
 
 const LABEL: Record<Kind, string> = { five_hour: '5-hour', seven_day: '7-day' }
 const REQUIRED = ['Goal', 'Status', 'Next steps', 'Repo state']
@@ -120,11 +120,10 @@ let simulated: number | undefined
 let simulateAfter: { calls: number; left: number } | undefined // dev-only: simulated reading lands mid-task
 let hasData = false
 let saidNoData = false
-let contextTokens: number | undefined
 const windows = new Map<Kind, { key: string; used: number; resetsAt?: string; fired: Set<'warn' | 'pause'> }>()
 let pending: string | undefined
 let owner: Kind | undefined // the window behind the current warn or pause
-let pause: { kind: Kind; usedAtNotice: number; calls: number; root: string; path: string; prompt: string; notice: string; stopBlocked: boolean; head?: string; fixes?: number; denials?: number; rescues?: number; outside?: boolean; gitRisk?: boolean } | undefined
+let pause: { kind: Kind; usedAtNotice: number; calls: number; root: string; path: string; prompt: string; notice: string; stopBlocked: boolean; head?: string; fixes?: number; rescues?: number; outside?: boolean; gitRisk?: boolean } | undefined
 let storeKey: string | undefined // `session:<id>`, set at session.start
 
 // Saved after every change so a /reload-plugins (Desktop reloads every open session) keeps a pause.
@@ -290,7 +289,7 @@ async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {
     prompt,
   ].join('\n')
   phase = 'pausing'
-  pause = { kind, usedAtNotice: used, calls: 0, root, path, prompt, notice, stopBlocked: false, head, fixes: 0, denials: 0, rescues: 0, outside, gitRisk }
+  pause = { kind, usedAtNotice: used, calls: 0, root, path, prompt, notice, stopBlocked: false, head, fixes: 0, rescues: 0, outside, gitRisk }
   pending = notice
 }
 
@@ -342,10 +341,7 @@ function validate(full: string, want: string, headNow = '', dirty: string[] = []
 async function logOutcome($: $, outcome: Outcome) {
   if (!pause || simulated !== undefined) return // simulated readings would skew the calibration
   const entry: Calibration = {
-    at: new Date(await $.clock.now()).toISOString(), kind: pause.kind, usedAtNotice: pause.usedAtNotice,
-    usedAtDone: windows.get(pause.kind)?.used ?? pause.usedAtNotice, toolCalls: pause.calls, contextTokens,
-    model: await $.session.model().then(m => String(m), () => undefined),
-    outcome, denials: pause.denials, fixes: pause.fixes,
+    usedAtNotice: pause.usedAtNotice, usedAtDone: windows.get(pause.kind)?.used ?? pause.usedAtNotice, outcome,
   }
   const log = ((await $.store.get('calibration')) as Calibration[] | undefined) ?? []
   await $.store.set('calibration', [...log, entry].slice(-100))
@@ -459,7 +455,6 @@ export const register: Register = (on, options) => {
   })
 
   on('session.measure', async ($, e, next) => {
-    if (e.context.tokens !== undefined) contextTokens = e.context.tokens
     await onReading($, e.rateLimits).catch(() => {})
     await save($)
     return next(e)
@@ -473,7 +468,6 @@ export const register: Register = (on, options) => {
     }
     const active = phase === 'pausing' || phase === 'gated'
     const refuse = async (deny: string) => {
-      if (pause) pause.denials = (pause.denials ?? 0) + 1
       await save($)
       return { deny }
     }
