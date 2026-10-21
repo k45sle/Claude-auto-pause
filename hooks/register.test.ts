@@ -384,7 +384,7 @@ describe('handoff validation', () => {
   test('manual handoffs are validated without a pause', async ($, on) => {
     world(on); await start($)
     const path = `${ROOT}/.handoffs/2026-10-19T1502-x.md`
-    const prompt = `Resume paused work in ${ROOT}.\nRead ${path} first. It is your only context from the previous session.\nCheck that \`git status\` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.`
+    const prompt = `Resume paused work in ${ROOT}.\nRead ${path} first. It is your only context from the previous session.\nCheck that \`git status\` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.\nIf the user tells you something in this session that differs from the handoff, follow the user.`
     const r = await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never)
     expect(ctx(r)).toContain('handoff OK')
   })
@@ -763,6 +763,7 @@ describe('snapshot accuracy', () => {
     const { prompt } = await pauseNotice($)
     expect(prompt).toContain('(if not, tell the user before editing)')
     expect(prompt).toContain('ask the user before doing anything outside its Goal')
+    expect(prompt).toContain('differs from the handoff, follow the user')
   })
 })
 
@@ -829,7 +830,7 @@ describe('abuse and misconfiguration', () => {
 describe('hardening', () => {
   const gated = async ($: any) => { const p = await pauseNotice($); await $.session.measure(reading(98)); return p }
   const status = async ($: any, args = '') => (await $.command.run({ command: 'auto-pause-status', args })).text as string
-  const prompt = (path: string) => `Resume paused work in ${ROOT}.\nRead ${path} first. It is your only context from the previous session.\nCheck that \`git status\` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.`
+  const prompt = (path: string) => `Resume paused work in ${ROOT}.\nRead ${path} first. It is your only context from the previous session.\nCheck that \`git status\` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.\nIf the user tells you something in this session that differs from the handoff, follow the user.`
   const p2 = (n: number) => String(n).padStart(2, '0')
   const stampNow = () => { const d = new Date(Date.parse('2026-10-19T15:02:00Z')); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}${p2(d.getMinutes())}` }
   const write = ($: any, file_path: string, content: string) => $.tool.call({ tool: 'Write', file_path, content } as never)

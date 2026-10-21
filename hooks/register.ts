@@ -242,7 +242,7 @@ function resumePrompt(root: string, path: string, inGit: boolean) {
   const check = inGit
     ? 'Check that `git status` and HEAD match its "Repo state" section (if not, tell the user before editing), then start with Next step 1.'
     : 'Check its "Repo state" section, then start with Next step 1.'
-  return `Resume paused work in ${root}.\nRead ${path} first. It is your only context from the previous session.\n${check}\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.`
+  return `Resume paused work in ${root}.\nRead ${path} first. It is your only context from the previous session.\n${check}\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.\nIf the user tells you something in this session that differs from the handoff, follow the user.`
 }
 
 async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {

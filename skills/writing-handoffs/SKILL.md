@@ -16,7 +16,7 @@ A handoff is one Markdown file that lets a fresh session continue this task with
 
 ## Workflow
 
-1. **Reach a safe point.** If an edit is in flight and one or two calls finish it, finish it. Otherwise revert it, or record its exact state (`path:line`, what is done, what is not). Start nothing new. If an AUTO-PAUSE notice gives a tool-call limit, stay within it.
+1. **Reach a safe point.** If an edit is in flight and one or two calls finish it, finish it. Otherwise revert it, or record its exact state (`path:line`, what is done, what is not). Start nothing new. If an AUTO-PAUSE notice gives a tool-call limit, stay within it. If an operation outside the repo is still running or its result is unconfirmed (a deploy, migration, CI run, remote job, sent request, background process), do not wait for it or retry it: record it under Outside operations.
 2. **Get the facts.**
    - Auto path: the AUTO-PAUSE notice gives the handoff path, usage, reset time, word budget, repo state, and resume prompt. Use them exactly as given. Do not run the script.
    - Manual path (no AUTO-PAUSE notice): your first call is `bash "${CLAUDE_SKILL_DIR}/scripts/facts.sh" <slug> '${user_config.handoff_dir}'`, where the slug is 2–4 words naming the task. It prints the handoff path, repo state, and resume prompt, and the plugin adds a line with usage, reset time, and word budget. If the script cannot run, read `${CLAUDE_SKILL_DIR}/references/fallback.md`.
@@ -48,6 +48,10 @@ Resume prompt (paste into a new Code session):
 - Not started: <remaining pieces>
 - Last request: <answered | partly | not started>; <what is left of it>
 
+## Outside operations
+- <what it does> · id: <run/job/deploy id, PR number, or URL> · last confirmed: <result you saw, or "none: started, outcome unknown"> · check with: <exact command or page>
+- Approvals: <who approved which outside action, when>; re-confirm before acting
+
 ## Next steps
 1. <first action, doable as written: file and change, or the exact command>
 2. <...>
@@ -74,6 +78,8 @@ Resume prompt (paste into a new Code session):
 - If the next action is the user's (a test, a decision, an approval), say so: "Ask the user …" or "Wait for the user to report …, then …". Never "the user does X" with nothing for the session to do.
 - Point to code by `path:line` or function name. Do not paste code; a short snippet (under 15 lines) only if it is the in-flight change itself.
 - Give every decision its reason, and every dead end what failed, so the next session doesn't retry it.
+- A changed-file list says nothing about remote state. If an outside operation's result is unconfirmed, Next step 1 is to check it with its id, and to retry only if that check shows it did not happen.
+- Before any outside action the handoff says was approved (deploy, push, send), the next session confirms the approval still stands: a newer user message or the operation's live status wins over the handoff.
 - Name every uncommitted file and its state. The plugin checks this against `git status`.
 - Don't quote the user's messages or list edited files for the record: after the check passes, the plugin appends both, read from the session.
 - Record the last test result you actually saw. Do not run tests just for the handoff.

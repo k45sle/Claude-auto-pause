@@ -51,5 +51,6 @@ Resume paused work in $project.
 Read $path first. It is your only context from the previous session.
 $check
 Read only the files it points to unless you need more, and ask the user before doing anything outside its Goal.
+If the user tells you something in this session that differs from the handoff, follow the user.
 PROMPT
 exit 0
