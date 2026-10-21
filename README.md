@@ -36,7 +36,7 @@ auto-pause's check is strict: the note must point to the current version of your
 
 The full comparison is in [docs/competitor-review.md](docs/competitor-review.md).
 
-Version 0.1.6. Still being tested.
+Version 0.1.7. Still being tested.
 
 ## What you need
 
