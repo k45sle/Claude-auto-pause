@@ -1,6 +1,6 @@
 {
   "name": "auto-pause",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Pauses Claude Code at a safe point before the usage limit and writes a handoff with a ready-to-paste resume prompt.",
   "author": {
     "name": "Kassle",

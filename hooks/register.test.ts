@@ -987,7 +987,7 @@ describe('hardening', () => {
     ['yaml', 'FOO_TOKEN: a1B2c3D4e5F6'], ['json suffix key', '{"github_token": "a1B2c3D4e5F6g7H8"}'],
     ['os.environ', 'os.environ["NOTION_TOKEN"] = "ntn_abcdefghijklmnop123"'], ['lowercase yaml', 'notion_token: ntn_a1B2c3D4e5F6'],
     ['camelCase', "const notionSecret = 'ntn_abcdefghijklmnop123'"], ['header key', '"x-api-key": "a1B2c3D4e5F6"'],
-    ['bare TOKEN', 'TOKEN=ntn_abcdefghijklmnop123'], ['long name', `GITHUB_${'X'.repeat(300)}_TOKEN=a1B2c3D4e5F6`],
+    ['bare TOKEN', 'TOKEN=ntn_abcdefghijklmnop123'], ['django key', 'DJANGO_SECRET_KEY=a1B2c3D4e5F6g7'], ['token value', 'TOKEN_VALUE=a1B2c3D4e5F6g7'], ['long name', `GITHUB_${'X'.repeat(300)}_TOKEN=a1B2c3D4e5F6`],
     ['query string', 'curl https://x.io/v1?api_key=a1B2c3D4e5F6'], ['aws credentials', 'aws_secret_access_key = a1B2c3D4e5F6g7H8']] as const)
     test(`${name} secrets are redacted from the appended facts`, async ($, on) => {
       const w = world(on); await start($)

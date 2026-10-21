@@ -25,9 +25,9 @@ const SECRETS = [
   /authorization\s*[:=]\s*(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}/i,
   /\b[a-z][a-z0-9+.-]{1,20}:\/\/[^\s:@/]+:[^\s@/]+@/i, // any scheme://user:pass@
   // NAME=value, NAME: value, "NAME": "value", env["NAME"] = value anywhere on a line (env, YAML, .mcp.json, code).
-  // The keyword must end the name, so TOKEN_PATH=... passes. A `:` value must be quoted or hold a digit, so prose like
+  // The keyword (or SECRET_KEY, TOKEN_VALUE, PASSWORD_HASH) must end the name, so TOKEN_PATH=... passes. A `:` value must be quoted or hold a digit, so prose like
   // "GITHUB_TOKEN: expired" passes. The name is read once and the lookahead checks it, which keeps it linear. `_PASS` does not match BYPASS.
-  /(?<![\w$])(?=[A-Z0-9_]*?(?:TOKEN|SECRET|PASSWORD|PASSWD|_PASS|API_KEY|PRIVATE_KEY)['"]?\]?[ \t]*[=:])[A-Z0-9_]+['"]?\]?[ \t]*(?:=[ \t]*['"]?(?!process\.env|os\.environ)(?![^\s'"]{0,200}\()|:[ \t]*['"]|:[ \t]*(?=[^\s'"]{0,200}\d)(?=[^\s'"]{0,200}[A-Za-z])(?![^\s'"]{0,200}\())[^\s'"$<{*]{8,}/,
+  /(?<![\w$])(?=[A-Z0-9_]*?(?:TOKEN|SECRET|PASSWORD|PASSWD|_PASS|API_KEY|PRIVATE_KEY)(?:_KEY|_VALUE|_HASH)?['"]?\]?[ \t]*[=:])[A-Z0-9_]+['"]?\]?[ \t]*(?:=[ \t]*['"]?(?!process\.env|os\.environ)(?![^\s'"]{0,200}\()|:[ \t]*['"]|:[ \t]*(?=[^\s'"]{0,200}\d)(?=[^\s'"]{0,200}[A-Za-z])(?![^\s'"]{0,200}\())[^\s'"$<{*]{8,}/,
   /glpat-[A-Za-z0-9_-]{20,}/,
   /\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}/,
   /\beyJ[\w-]{10,}\.eyJ[\w-]{10,}\.[\w-]{10,}/,
@@ -422,10 +422,10 @@ async function writeFallback($: $, why: string) {
     '## Repo state', pause.head ? `${branch || '(detached)'} · HEAD ${(await git($, 'rev-parse', '--short', 'HEAD')) || pause.head}` : 'not a git repository', ...status.slice(0, 40).map(l => `- ${l}`),
     '',
   ].join('\n')
-  await $.fs.write(pause.path, text).catch(() => {})
+  const wrote = await $.fs.write(pause.path, text).then(() => true, () => false)
   await finishPause($, 'fallback')
   // Toasts do not render in Desktop (Phase 0); a native notification does.
-  await $.ui.notify(`Facts-only handoff written: ${pause.path}. /auto-pause-status shows the resume prompt.`, { title: 'auto-pause' }).catch(() => undefined)
+  await $.ui.notify(wrote ? `Facts-only handoff written: ${pause.path}. /auto-pause-status shows the resume prompt.` : `Could not write the facts-only handoff to ${pause.path}. The tools are unblocked.`, { title: 'auto-pause' }).catch(() => undefined)
 }
 
 export const register: Register = (on, options) => {
