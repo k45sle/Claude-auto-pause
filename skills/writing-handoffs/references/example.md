@@ -5,6 +5,8 @@
 
 Paused 2026-10-19 15:02 · 5h 94% used, resets 17:00 · reason: AUTO-PAUSE
 
+Next session: Sonnet - high. The retry wrapper is designed; what is left is coding it and its tests.
+
 Resume prompt (paste into a new Code session):
 
 ```text

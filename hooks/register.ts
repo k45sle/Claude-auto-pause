@@ -512,11 +512,11 @@ export const register: Register = (on, options) => {
       } else if (text !== undefined && !problems.length) {
         await appendFacts($, String(file), text, root || (await $.session.cwd()))
         if (active) await finishPause($)
-        context.push(`AUTO-PAUSE: handoff OK. End your turn now with the handoff path${active ? `, when usage resets` : ''}, and the resume prompt verbatim in a \`\`\`text block.`)
+        context.push(`AUTO-PAUSE: handoff OK. End your turn now with the handoff path${active ? `, when usage resets` : ''}, the "Next session" line, and the resume prompt verbatim in a \`\`\`text block.`)
       } else if (problems.length && active && (pause!.fixes = (pause!.fixes ?? 0) + 1) >= MAX_FIXES) {
         // Never lock a session on validation: after three tries the gate opens, logged as released.
         await finishPause($, 'released')
-        context.push(`AUTO-PAUSE: the handoff still has problems (${problems.join(' ')}) The gate is open anyway. End your turn now with the handoff path and the resume prompt in a \`\`\`text block.`)
+        context.push(`AUTO-PAUSE: the handoff still has problems (${problems.join(' ')}) The gate is open anyway. End your turn now with the handoff path, the "Next session" line, and the resume prompt in a \`\`\`text block.`)
       } else if (problems.length) {
         context.push(`AUTO-PAUSE: the handoff needs fixes. Make them all in one Edit:\n${problems.map(p => `- ${p}`).join('\n')}`)
       }

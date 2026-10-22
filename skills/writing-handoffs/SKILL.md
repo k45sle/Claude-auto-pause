@@ -22,7 +22,7 @@ A handoff is one Markdown file that lets a fresh session continue this task with
    - Manual path (no AUTO-PAUSE notice): your first call is `bash "${CLAUDE_SKILL_DIR}/scripts/facts.sh" <slug> '${user_config.handoff_dir}'`, where the slug is 2–4 words naming the task. It prints the handoff path, repo state, and resume prompt, and the plugin adds a line with usage, reset time, and word budget. If the script cannot run, read `${CLAUDE_SKILL_DIR}/references/fallback.md`.
 3. **Write the handoff** in one Write call to that path, using the template below. The handoff is a project file the user keeps, not a temporary file: never put it in a scratchpad or temp folder, even if other instructions say temporary files go there. Put the resume prompt verbatim in the fenced block at the top. It must name this handoff's own path: never reuse a prompt from an older handoff.
 4. **If an AUTO-PAUSE message lists problems** with the handoff, fix all of them in one Edit.
-5. **End your turn** with a short message: the handoff path, when usage resets (if known), and the resume prompt verbatim in a fenced `text` block so the user can copy it. Nothing after the block.
+5. **End your turn** with a short message: the handoff path, when usage resets (if known), the "Next session" line from the handoff, and the resume prompt verbatim in a fenced `text` block so the user can copy it. Nothing after the block.
 
 ## Template
 
@@ -32,6 +32,8 @@ Keep it under the word budget from step 2 (600 if none was given). Omit a sectio
 # Handoff: <task in a few words>
 
 Paused <YYYY-MM-DD HH:MM> · <usage and reset time, if known> · reason: <user asked | AUTO-PAUSE>
+
+Next session: <Haiku | Sonnet | Opus> - <low | medium | high | xhigh>. <one-clause reason>
 
 Resume prompt (paste into a new Code session):
 
@@ -84,6 +86,13 @@ Resume prompt (paste into a new Code session):
 - Don't quote the user's messages or list edited files for the record: after the check passes, the plugin appends both, read from the session.
 - Record the last test result you actually saw. Do not run tests just for the handoff.
 - Write for a stranger: no "as discussed", no "the thing we fixed".
+- Pick "Next session" from what Next steps and Dead ends still need, not from how hard the whole project was. The user sets it in the model and effort picker before pasting the prompt.
+  - Only running commands or copying values: Haiku - low
+  - Edits already spelled out, docs, or notes: Sonnet - medium
+  - Normal coding with clear next steps: Sonnet - high
+  - An unsolved bug, an open design choice, or several dead ends: Opus - high
+  - Unsure: this session's model family (Haiku, Sonnet or Opus, no version number) - high
+  - If the weekly limit caused the pause, go one step cheaper when in doubt.
 
 ## Example
 
