@@ -78,7 +78,8 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
     if (e.tool === 'Edit' && x.file_path) files.set(x.file_path, (files.get(x.file_path) ?? '').replace(x.old_string ?? '', x.new_string ?? ''))
     return { result: 'ok' }
   })
-  on('tool.check', () => ({ decision: 'ask' as const }))
+  // A real call (tool_use_id set) stands for one the user approved; a bare query still gets the engine's 'ask'.
+  on('tool.check', ($, e) => ({ decision: e.tool_use_id ? 'allow' as const : 'ask' as const }))
   on('classic.Stop', () => ({}))
   on('classic.StopFailure', () => ({}))
   on('session.messages', () => ({ value: [
