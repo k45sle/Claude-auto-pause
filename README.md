@@ -101,7 +101,7 @@ Then quit and reopen the Desktop app. Chats that were already open need `/reload
 
 ## Settings
 
-Type `/plugin configure auto-pause@k45sle` in a Claude Code chat, then restart the Desktop app. The two you're most likely to change:
+In the Terminal app, run `claude`, type `/plugin configure auto-pause@k45sle`, then restart the Desktop app. The Desktop app has no `/plugin` command, so there you can ask Claude instead: "In my user settings, set pluginConfigs auto-pause@k45sle options pause_at_percent_left to 5, as a number." Numbers must not have quotes around them: `"5"` stops the plugin from loading, and `/auto-pause-status` disappears. The two you're most likely to change:
 
 - `pause_at_percent_left` (default 8): when Claude stops and saves its note.
 - `warn_at_percent_left` (default 15): when Claude is told to wrap up. Keep it above the pause number.
