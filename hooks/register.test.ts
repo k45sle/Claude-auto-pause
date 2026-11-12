@@ -5,7 +5,7 @@ const ROOT = '/Users/me/My Projects/app'
 const RESETS = '2026-10-19T22:00:00.000Z'
 const NEXT_RESETS = '2026-10-20T03:00:00.000Z'
 
-type World = { files: Map<string, string>; calls: string[]; notes: string[]; store: Map<string, unknown>; head: { value: string }; ask: { value: string }; id: { value: string }; status: { value: string }; exclude: { value: string }; links: Map<string, string>; top: { value: string }; config: { value: string }; tracked: { value: string }; runs: string[]; toasts: string[]; now: { value: number } }
+type World = { files: Map<string, string>; calls: string[]; notes: string[]; store: Map<string, unknown>; head: { value: string }; ask: { value: string }; id: { value: string }; status: { value: string }; exclude: { value: string }; links: Map<string, string>; top: { value: string }; config: { value: string }; tracked: { value: string }; runs: string[]; toasts: string[]; now: { value: number }; diff: { value: string }; ahead: { value: string } }
 
 // The engine beneath the plugin: git in a repo with one change, files in memory,
 // every tool answering ok (Write/Edit store their text so validation can read it).
@@ -25,6 +25,8 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   const runs: string[] = [] // every git argv, as run
   const toasts: string[] = []
   const failWrite = { value: '' } // fs.write throws for this path
+  const diff = { value: 'diff --git a/src/a.ts b/src/a.ts\n+x\n' } // git diff HEAD
+  const ahead = { value: '0' } // commits HEAD gained since a handoff's HEAD
   const now = { value: Date.parse('2026-10-19T15:02:00Z') }
   on('clock.now', () => ({ value: now.value }))
   // A store the test can read back, so saved state can be checked.
@@ -51,6 +53,9 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
     if (a === 'rev-parse --short HEAD') return out(`${head.value}\n`)
     if (a === 'status --porcelain') return out(status.value)
     if (a === 'rev-parse --path-format=absolute --git-path info/exclude') return out(exclude.value)
+    if (a.startsWith('diff --no-ext-diff --no-textconv HEAD')) return out(diff.value)
+    if (a.startsWith('rev-list --count HEAD..')) return out('0\n')
+    if (a.startsWith('rev-list --count ')) return out(`${ahead.value}\n`)
     return out('')
   })
   on('fs.exists', ($, e) => ({ value: files.has(e.path) }))
@@ -87,12 +92,12 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
     { role: 'user', text: 'Start with the parser module', toolUses: [] },
     { role: 'user', text: ask.value, toolUses: [] },
     { role: 'user', text: '<system-reminder>harness text</system-reminder>', toolUses: [] },
-    { role: 'assistant', text: '', toolUses: [{ tool_use_id: 't1', tool: 'Edit', input: { file_path: `${ROOT}/src/a.ts` } }] },
+    { role: 'assistant', text: '', toolUses: [{ tool_use_id: 't1', tool: 'Edit', input: { file_path: `${ROOT}/src/a.ts` } }, { tool_use_id: 't2', tool: 'TodoWrite', input: { todos: [{ content: 'Parse dates', status: 'completed', activeForm: 'x' }, { content: 'Wire the parser', status: 'in_progress', activeForm: 'x' }, { content: 'Docs', status: 'pending', activeForm: 'x' }] } }] },
   ] }) as never)
   on('ui.notify', ($, e) => (notes.push(e.text), { value: { isSent: true, channel: 'test' } }) as never)
   on('session.id', () => ({ value: id.value }))
   on('ui.toast', ($, e) => (toasts.push(e.text), { value: undefined }) as never)
-  return { files, calls, notes, store: kv, head, ask, id, status, exclude, links, top, config, tracked, runs, toasts, failWrite, now }
+  return { files, calls, notes, store: kv, head, ask, id, status, exclude, links, top, config, tracked, runs, toasts, failWrite, now, diff, ahead }
 }
 
 const reading = (used: number, kind = 'five_hour', resetsAt = RESETS) => ({
@@ -132,14 +137,14 @@ async function start($: any) {
 }
 
 async function pauseNotice($: any): Promise<{ notice: string; path: string; prompt: string }> {
-  await $.session.measure(reading(94))
+  await $.session.measure(reading(96))
   const notice = ctx(await $.tool.call(bash))
   const path = /^Handoff path: (.*)$/m.exec(notice)![1]!
   const prompt = notice.split('end your turn with it in a code block):\n')[1]!
   return { notice, path, prompt }
 }
 
-const gated = async ($: any) => { const p = await pauseNotice($); await $.session.measure(reading(98)); return p }
+const gated = async ($: any) => { const p = await pauseNotice($); await $.session.measure(reading(99)); return p }
 const status = async ($: any, args = '') => (await $.command.run({ command: 'auto-pause-status', args })).text as string
 
 describe('thresholds', () => {
@@ -151,25 +156,27 @@ describe('thresholds', () => {
 
   test('warns once per window', async ($, on) => {
     world(on); await start($)
-    await $.session.measure(reading(86))
+    await $.session.measure(reading(93))
     const first = ctx(await $.tool.call(bash))
-    expect(first).toContain('AUTO-PAUSE: warning. 5-hour usage 86% used (14% left)')
-    await $.session.measure(reading(88))
+    expect(first).toContain('AUTO-PAUSE: warning. 5-hour usage 93% used (7% left)')
+    await $.session.measure(reading(94))
     expect(ctx(await $.tool.call(bash))).toBe('')
   })
 
-  test('default pause point is 8% left (92% used)', async ($, on) => {
+  test('default pause point is 4% left (96% used)', async ($, on) => {
     world(on); await start($)
-    await $.session.measure(reading(91))
+    await $.session.measure(reading(93))
     expect(ctx(await $.tool.call(bash))).toContain('AUTO-PAUSE: warning.')
-    await $.session.measure(reading(92))
-    expect(ctx(await $.tool.call(bash))).toContain('AUTO-PAUSE: pause threshold reached. 5-hour usage 92% used (8% left)')
+    await $.session.measure(reading(95))
+    expect(ctx(await $.tool.call(bash))).toBe('')
+    await $.session.measure(reading(96))
+    expect(ctx(await $.tool.call(bash))).toContain('AUTO-PAUSE: pause threshold reached. 5-hour usage 96% used (4% left)')
   })
 
   test('pause notice carries absolute paths, repo state and a resume prompt, once', async ($, on) => {
     const w = world(on); await start($)
     const { notice, path, prompt } = await pauseNotice($)
-    expect(notice).toContain('AUTO-PAUSE: pause threshold reached. 5-hour usage 94% used (6% left)')
+    expect(notice).toContain('AUTO-PAUSE: pause threshold reached. 5-hour usage 96% used (4% left)')
     expect(notice).toContain('at most 5 more tool calls')
     expect(path.startsWith(`${ROOT}/.handoffs/`)).toBe(true)
     expect(path.endsWith('-auto-pause.md')).toBe(true)
@@ -222,19 +229,19 @@ describe('thresholds', () => {
 
   test('a reset after a warning alone returns to normal and warns again', async ($, on) => {
     world(on); await start($)
-    await $.session.measure(reading(86))
+    await $.session.measure(reading(93))
     expect(ctx(await $.tool.call(bash))).toContain('warning')
-    await $.session.measure(reading(87, 'five_hour', NEXT_RESETS))
-    expect(ctx(await $.tool.call(bash))).toContain('warning. 5-hour usage 87%')
+    await $.session.measure(reading(94, 'five_hour', NEXT_RESETS))
+    expect(ctx(await $.tool.call(bash))).toContain('warning. 5-hour usage 94%')
   })
 
   test('a weekly pause held back by a 5-hour pause fires after the 5-hour reset', async ($, on) => {
     const w = world(on); await start($)
     const both = (five: number, resets: string) => ({ ...reading(five), rateLimits: [{ kind: 'five_hour', percentUsed: five, resetsAt: resets }, { kind: 'seven_day', percentUsed: 97, resetsAt: '2026-10-25T00:00:00.000Z' }] })
-    await $.session.measure(both(94, RESETS))
+    await $.session.measure(both(96, RESETS))
     const { path, prompt } = await (async () => {
       const notice = ctx(await $.tool.call(bash))
-      expect(notice).toContain('5-hour usage 94%')
+      expect(notice).toContain('5-hour usage 96%')
       return { path: /^Handoff path: (.*)$/m.exec(notice)![1]!, prompt: notice.split('code block):\n')[1]! }
     })()
     await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never)
@@ -258,21 +265,21 @@ describe('thresholds', () => {
   })
 
   test('simulate env var pauses from session start', async ($, on) => {
-    world(on, { AUTO_PAUSE_SIMULATE_PERCENT_LEFT: '6' }); await start($)
-    expect((await status($))).toContain('5-hour usage 94% used (6% left), reset time unknown')
+    world(on, { AUTO_PAUSE_SIMULATE_PERCENT_LEFT: '4' }); await start($)
+    expect((await status($))).toContain('5-hour usage 96% used (4% left), reset time unknown')
     const { path, prompt } = await pauseNotice($)
     expect(path).toContain('/.handoffs/')
     expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))).toContain('handoff OK')
     const text = await status($)
-    expect(text).toContain('State: paused (simulated 6% left)')
+    expect(text).toContain('State: paused (simulated 4% left)')
     expect(text).not.toContain('Calibration')
   })
   test('simulate after N calls lands mid-task, on main or subagent calls', async ($, on) => {
-    world(on, { EVAL_AUTO_PAUSE_SIMULATE_PERCENT_LEFT: '6', EVAL_AUTO_PAUSE_SIMULATE_AFTER_CALLS: '2' }); await start($)
+    world(on, { EVAL_AUTO_PAUSE_SIMULATE_PERCENT_LEFT: '4', EVAL_AUTO_PAUSE_SIMULATE_AFTER_CALLS: '2' }); await start($)
     expect(ctx(await $.tool.call(bash))).toBe('')
     expect((await $.tool.call({ tool: 'Read', file_path: `${ROOT}/a.ts`, agentId: 'sub1' } as never)).deny).toBeUndefined()
     expect((await $.tool.call({ tool: 'Read', file_path: `${ROOT}/b.ts`, agentId: 'sub1' } as never)).deny).toContain('return to the parent')
-    expect(ctx(await $.tool.call(bash))).toContain('AUTO-PAUSE: pause threshold reached. 5-hour usage 94% used (6% left)')
+    expect(ctx(await $.tool.call(bash))).toContain('AUTO-PAUSE: pause threshold reached. 5-hour usage 96% used (4% left)')
     await $.session.measure(reading(40)) // a real reading must not restart the pause
     expect(ctx(await $.tool.call(bash))).toBe('')
   })
@@ -291,14 +298,14 @@ describe('gate', () => {
   test('gate after points even within the grace calls', async ($, on) => {
     world(on); await start($)
     await pauseNotice($)
-    await $.session.measure(reading(97))
+    await $.session.measure(reading(99))
     expect((await $.tool.call(bash)).deny).toContain('AUTO-PAUSE gate')
   })
 
   test('handoff skill and writes pass the gate', async ($, on) => {
     world(on); await start($)
     const { path } = await pauseNotice($)
-    await $.session.measure(reading(98))
+    await $.session.measure(reading(99))
     expect((await $.tool.call({ tool: 'Skill', skill: 'auto-pause:writing-handoffs' } as never)).deny).toBeUndefined()
     expect((await $.tool.call({ tool: 'Write', file_path: path, content: 'x' } as never)).deny).toBeUndefined()
     expect((await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/src/a.ts`, old_string: 'a', new_string: 'b' } as never)).deny).toContain('AUTO-PAUSE gate')
@@ -328,7 +335,7 @@ describe('gate', () => {
 describe('stop', () => {
   test('blocks once while pausing, then lets the turn end', async ($, on) => {
     world(on); await start($)
-    await $.session.measure(reading(94))
+    await $.session.measure(reading(96))
     const first = await $.classic.Stop({ stop_hook_active: false })
     expect(first.block).toContain('AUTO-PAUSE: pause threshold reached')
     expect((await $.classic.Stop({ stop_hook_active: true })).block).toBeUndefined()
@@ -337,7 +344,7 @@ describe('stop', () => {
 
   test('never blocks when not pausing', async ($, on) => {
     world(on); await start($)
-    await $.session.measure(reading(86))
+    await $.session.measure(reading(93))
     expect((await $.classic.Stop({ stop_hook_active: false })).block).toBeUndefined()
   })
 })
@@ -346,7 +353,7 @@ describe('handoff validation', () => {
   test('a valid handoff releases the gate and logs calibration', async ($, on) => {
     world(on); await start($)
     const { path, prompt } = await pauseNotice($)
-    await $.session.measure(reading(96))
+    await $.session.measure(reading(98))
     const r = await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never)
     expect(ctx(r)).toContain('AUTO-PAUSE: handoff OK')
     expect((await $.tool.call(bash)).deny).toBeUndefined()
@@ -370,7 +377,7 @@ describe('handoff validation', () => {
     expect(c).toContain('"Next steps" needs at least one item.')
     expect(c).toContain('code blocks over 15 lines')
     expect(c).toContain('secret-looking')
-    await $.session.measure(reading(98))
+    await $.session.measure(reading(99))
     expect((await $.tool.call(bash)).deny).toContain('AUTO-PAUSE gate')
     // One Edit fixes the heading; the rest still fails, so the gate stays.
     const fixed = await $.tool.call({ tool: 'Edit', file_path: path, old_string: '## Aim', new_string: '## Goal' } as never)
@@ -444,7 +451,7 @@ describe('handoff validation', () => {
     await pauseNotice($)
     const sneaky = `${ROOT}/.handoffs/../CLAUDE.md`
     expect((await $.tool.check({ tool: 'Write', input: { file_path: sneaky, content: '' } } as never)).decision).toBe('ask')
-    await $.session.measure(reading(98))
+    await $.session.measure(reading(99))
     expect((await $.tool.call({ tool: 'Write', file_path: sneaky, content: 'x' } as never)).deny).toContain('AUTO-PAUSE gate')
   })
 
@@ -461,7 +468,7 @@ describe('windows', () => {
     await $.session.measure(reading(3, 'five_hour', NEXT_RESETS))
     expect((await $.tool.call(bash)).deny).toBeUndefined()
     expect((await status($))).toContain('State: normal')
-    await $.session.measure(reading(95, 'five_hour', NEXT_RESETS))
+    await $.session.measure(reading(96, 'five_hour', NEXT_RESETS))
     expect(ctx(await $.tool.call(bash))).toContain('pause threshold reached')
   })
 
@@ -498,7 +505,7 @@ describe('refinements from the competitor review', () => {
   test('the gate lets reads and read-only git through, nothing else', async ($, on) => {
     world(on); await start($)
     await pauseNotice($)
-    await $.session.measure(reading(98))
+    await $.session.measure(reading(99))
     expect((await $.tool.call({ tool: 'Read', file_path: `${ROOT}/src/a.ts` } as never)).deny).toBeUndefined()
     expect((await $.tool.call({ tool: 'Bash', command: 'git status --porcelain' } as never)).deny).toBeUndefined()
     expect((await $.tool.call({ tool: 'Bash', command: 'git log --oneline -5' } as never)).deny).toBeUndefined()
@@ -514,7 +521,7 @@ describe('refinements from the competitor review', () => {
     const r = await $.tool.call({ tool: 'Write', file_path: other, content: handoff(prompt) } as never)
     expect(ctx(r)).toContain('Write the handoff to exactly that path')
     expect(ctx(r)).not.toContain('handoff OK')
-    await $.session.measure(reading(98))
+    await $.session.measure(reading(99))
     expect((await $.tool.call({ tool: 'Write', file_path: other, content: '' } as never)).deny).toContain('AUTO-PAUSE gate')
   })
 
@@ -529,7 +536,7 @@ describe('refinements from the competitor review', () => {
   test('three failed checks open the gate instead of locking the session', async ($, on) => {
     world(on); await start($)
     const { path } = await pauseNotice($)
-    await $.session.measure(reading(98))
+    await $.session.measure(reading(99))
     for (let i = 0; i < 2; i++) expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: '# nothing' } as never))).toContain('needs fixes')
     expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: '# nothing' } as never))).toContain('The gate is open anyway')
     expect((await $.tool.call(bash)).deny).toBeUndefined()
@@ -586,7 +593,7 @@ describe('refinements from the competitor review', () => {
 
   test('hitting the limit before any pause writes a facts-only handoff', async ($, on) => {
     const w = world(on); await start($)
-    await $.session.measure(reading(86))
+    await $.session.measure(reading(93))
     await $.classic.StopFailure({ error: 'rate_limit' } as never)
     const written = [...w.files.keys()].find(k => k.includes('/.handoffs/'))!
     expect(w.files.get(written)).toContain('The usage limit was hit before the handoff was written.')
@@ -610,7 +617,7 @@ describe('refinements from the competitor review', () => {
   test('release opens the gate and is logged as an override', async ($, on) => {
     world(on); await start($)
     await pauseNotice($)
-    await $.session.measure(reading(98))
+    await $.session.measure(reading(99))
     expect((await $.tool.call(bash)).deny).toContain('AUTO-PAUSE gate')
     expect((await status($, 'release'))).toContain('Gate released by you')
     expect((await $.tool.call(bash)).deny).toBeUndefined()
@@ -633,14 +640,14 @@ describe('review fixes', () => {
     await $.session.measure(reading(40))
     await $.classic.StopFailure({ error: 'rate_limit' } as never)
     expect([...w.files.keys()].some(k => k.includes('/.handoffs/'))).toBe(false)
-    await $.session.measure(reading(94))
+    await $.session.measure(reading(96))
     expect(ctx(await $.tool.call(bash))).toContain('pause threshold reached')
   })
 
   test('mutating git subcommands and file-writing flags stay gated', async ($, on) => {
     world(on); await start($)
     await pauseNotice($)
-    await $.session.measure(reading(98))
+    await $.session.measure(reading(99))
     for (const command of ['git branch -D main', 'git branch newname', 'git branch -m x', 'git diff --output=/tmp/x', 'git log --output=x', 'git show --ext-diff HEAD'])
       expect((await $.tool.call({ tool: 'Bash', command } as never)).deny).toContain('AUTO-PAUSE gate')
     for (const command of ['git branch', 'git branch --show-current', 'git branch -a', 'git diff HEAD~1 -- src/a.ts', 'git rev-parse --short HEAD'])
@@ -860,7 +867,7 @@ describe('abuse and misconfiguration', () => {
 
   test('out-of-range settings fall back to the defaults', { options: { pause_at_percent_left: 500, warn_at_percent_left: -5, gate_after_points: 0, handoff_word_budget: 0 } }, async ($, on) => {
     world(on); await start($)
-    await $.session.measure(reading(86))
+    await $.session.measure(reading(93))
     expect(ctx(await $.tool.call(bash))).toContain('AUTO-PAUSE: warning.')
     const { path, prompt } = await pauseNotice($)
     for (let i = 0; i < 4; i++) expect((await $.tool.call(bash)).deny).toBeUndefined() // the notice call plus 4: 5 grace calls, not 0 points
@@ -1077,12 +1084,140 @@ describe('hardening', () => {
     expect(ctx(await write($, path, handoff(pr)))).toContain('"## Repo state": src/x.py.')
   })
 
-  test('status shows the settings in use and the ones ignored', { options: { pause_at_percent_left: 150, warn_at_percent_left: 5 } }, async ($, on) => {
+  test('status shows the settings in use and the ones ignored', { options: { pause_at_percent_left: 150, warn_at_percent_left: 3 } }, async ($, on) => {
     world(on); await start($)
     const text = await status($)
     expect(text.startsWith('State: normal')).toBe(true)
     expect(text).toContain('Gate after 5 tool calls or 3 points. Handoff folder .handoffs. Word budget 600.')
-    expect(text).toContain('pause_at_percent_left "150" is out of range; using 8.')
-    expect(text).toContain('warn_at_percent_left 5 is not above pause_at_percent_left 8, so there is no separate warning.')
+    expect(text).toContain('pause_at_percent_left "150" is out of range; using 4.')
+    expect(text).toContain('warn_at_percent_left 3 is not above pause_at_percent_left 4, so there is no separate warning.')
   })
+})
+
+describe('resume check', () => {
+  const writeHandoff = async ($: any) => {
+    const { path, prompt } = await pauseNotice($)
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))).toContain('handoff OK')
+    return path
+  }
+  // A later session starts from a new id, so nothing is paused and only its reads carry context.
+  const reopen = async (w: World, $: any, path: string) => {
+    w.id.value = 's2'
+    await start($)
+    return ctx(await $.tool.call({ tool: 'Read', file_path: path } as never))
+  }
+
+  test('a checked handoff carries the snapshot and the todo list', async ($, on) => {
+    const w = world(on); await start($)
+    const path = await writeHandoff($)
+    const text = w.files.get(path)!
+    expect(text).toContain('Snapshot (auto-pause compares this with the repo when the handoff is read): HEAD abc1234 · diff ')
+    expect(text).toContain('files 3 ["src/a.ts","src/c.ts","src/b.ts"]')
+    expect(text).toContain('Todo list at the pause ([x] done, [>] in progress, [ ] not started): [x] Parse dates · [>] Wire the parser · [ ] Docs')
+  })
+
+  test('a new session reading it with nothing changed is told the repo matches', async ($, on) => {
+    const w = world(on); await start($)
+    const path = await writeHandoff($)
+    expect(await reopen(w, $, path)).toContain("the repo matches this handoff's snapshot")
+  })
+
+  test('HEAD moved since the handoff', async ($, on) => {
+    const w = world(on); await start($)
+    const path = await writeHandoff($)
+    w.head.value = 'def5678'; w.ahead.value = '2'
+    expect(await reopen(w, $, path)).toContain('HEAD was abc1234, is now def5678 (2 commits since')
+  })
+
+  test('uncommitted files came and went since the handoff', async ($, on) => {
+    const w = world(on); await start($)
+    const path = await writeHandoff($)
+    w.status.value = ' M src/a.ts\n?? src/d.ts\n'
+    const c = await reopen(w, $, path)
+    expect(c).toContain('no longer uncommitted (committed, reverted or deleted): src/c.ts, src/b.ts')
+    expect(c).toContain('newly uncommitted: src/d.ts')
+  })
+
+  test('the same files changed contents', async ($, on) => {
+    const w = world(on); await start($)
+    const path = await writeHandoff($)
+    w.diff.value = 'diff --git a/src/a.ts b/src/a.ts\n+y\n'
+    expect(await reopen(w, $, path)).toContain('their contents changed')
+  })
+
+  test('the session that wrote the handoff reads it back with no check', async ($, on) => {
+    world(on); await start($)
+    const path = await writeHandoff($)
+    expect(ctx(await $.tool.call({ tool: 'Read', file_path: path } as never))).not.toContain('resume check')
+  })
+
+  test('a second read in the same new session is not checked again', async ($, on) => {
+    const w = world(on); await start($)
+    const path = await writeHandoff($)
+    expect(await reopen(w, $, path)).toContain('resume check')
+    expect(ctx(await $.tool.call({ tool: 'Read', file_path: path } as never))).not.toContain('resume check')
+  })
+
+  test('a handoff file with no snapshot line is not checked', async ($, on) => {
+    const w = world(on); await start($)
+    w.files.set(`${ROOT}/.handoffs/old.md`, handoff('x'))
+    expect(ctx(await $.tool.call({ tool: 'Read', file_path: `${ROOT}/.handoffs/old.md` } as never))).not.toContain('resume check')
+  })
+
+  test('a snapshot line whose head is not hex is ignored and never reaches git', async ($, on) => {
+    const w = world(on); await start($)
+    const snap = 'Snapshot (auto-pause compares this with the repo when the handoff is read): HEAD --upload-pack=x · diff abc · files 1 ["src/a.ts"]'
+    w.files.set(`${ROOT}/.handoffs/evil.md`, `# Handoff\n\n${snap}\n`)
+    expect(ctx(await $.tool.call({ tool: 'Read', file_path: `${ROOT}/.handoffs/evil.md` } as never))).not.toContain('resume check')
+    expect(w.runs.filter(r => r.includes('upload-pack'))).toEqual([])
+  })
+
+  test('the facts-only fallback carries the snapshot, the todo list and the first unfinished todo', async ($, on) => {
+    const w = world(on); await start($)
+    const { path } = await pauseNotice($)
+    await $.classic.Stop({ stop_hook_active: false })
+    await $.classic.Stop({ stop_hook_active: true })
+    const text = w.files.get(path)!
+    expect(text).toContain('Snapshot (auto-pause compares this with the repo when the handoff is read):')
+    expect(text).toContain('Todo list at the pause ([x] done, [>] in progress, [ ] not started): [x] Parse dates · [>] Wire the parser · [ ] Docs')
+    expect(text).toContain('The first unfinished todo was: Wire the parser.')
+  })
+
+  test('a newer handoff for the project is mentioned', async ($, on) => {
+    const w = world(on); await start($)
+    const path = await writeHandoff($)
+    w.id.value = 's2'; await start($)
+    const newer = `${ROOT}/.handoffs/2099-01-01T0000-auto-pause.md`
+    w.files.set(newer, handoff('x'))
+    w.store.set(`last:${ROOT}`, { path: newer, prompt: 'x', at: 'x', outcome: 'verified' })
+    expect(ctx(await $.tool.call({ tool: 'Read', file_path: path } as never))).toContain('a newer handoff exists for this project')
+  })
+})
+
+describe('mutation: each corruption of a good handoff is caught', () => {
+  test('the unmodified handoff passes', async ($, on) => {
+    world(on); await start($)
+    const { path, prompt } = await pauseNotice($)
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))).toContain('handoff OK')
+  })
+
+  const corruptions: [string, (text: string, path: string) => string][] = [
+    ['Goal heading removed', t => t.replace('## Goal', '')],
+    ['Status heading removed', t => t.replace('## Status', '')],
+    ['Next steps heading removed', t => t.replace('## Next steps', '')],
+    ['Repo state heading removed', t => t.replace('## Repo state', '')],
+    ['Next steps left empty', t => t.replace('1. Edit src/b.ts line 3.', '')],
+    ['Repo state names another commit', t => t.replace('abc1234', 'fff9999')],
+    ['an uncommitted file is not named', t => t.replace(/src\/c\.ts/g, '')],
+    ['a secret-looking line is appended', t => t + '\nGITHUB_TOKEN=ghp_' + 'a1B2c3D4'.repeat(5) + '\n'],
+    ['the resume prompt names another file', (t, path) => t.split(path).join(path.replace(/\.md$/, '-other.md'))],
+    ['800 filler words appended', t => t + '\n' + 'word '.repeat(800)],
+    ['a 20-line code block appended', t => t + '\n```ts\n' + 'x\n'.repeat(20) + '```\n'],
+  ]
+  for (const [name, corrupt] of corruptions)
+    test(name, async ($, on) => {
+      world(on); await start($)
+      const { path, prompt } = await pauseNotice($)
+      expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: corrupt(handoff(prompt), path) } as never))).toContain('needs fixes')
+    })
 })

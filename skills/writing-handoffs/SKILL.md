@@ -83,7 +83,7 @@ Resume prompt (paste into a new Code session):
 - A changed-file list says nothing about remote state. If an outside operation's result is unconfirmed, Next step 1 is to check it with its id, and to retry only if that check shows it did not happen.
 - Before any outside action the handoff says was approved (deploy, push, send), the next session confirms the approval still stands: a newer user message or the operation's live status wins over the handoff.
 - Name every uncommitted file and its state. The plugin checks this against `git status`.
-- Don't quote the user's messages or list edited files for the record: after the check passes, the plugin appends both, read from the session.
+- Don't quote the user's messages, list edited files, or copy the todo list for the record: after the check passes, the plugin appends all three, read from the session, plus a repo snapshot it compares with git when the next session opens the handoff.
 - Record the last test result you actually saw. Do not run tests just for the handoff.
 - Write for a stranger: no "as discussed", no "the thing we fixed".
 - Pick "Next session" from what Next steps and Dead ends still need, not from how hard the whole project was. The user sets it in the model and effort picker before pasting the prompt.

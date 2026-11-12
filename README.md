@@ -16,7 +16,7 @@ Claude has two usage limits: one resets every 5 hours, the other every week. Whe
 - The new chat starts from the right place, because the note is checked against your actual files.
 - You can pick a different model for the new chat, such as a cheaper one. Next to the resume prompt, Claude suggests a model and effort for what is left, such as "Next session: Sonnet - medium". The note is a plain text file any model can read. Switching models in the old chat would make the new model re-read the whole conversation at full price.
 
-The cost: Claude spends part of your last 8% writing the note, and you paste the resume prompt yourself. We haven't yet measured how much usage this saves in real use.
+The cost: Claude spends part of your last 4% writing the note, and you paste the resume prompt yourself. We haven't yet measured how much usage this saves in real use.
 
 ## How it's different
 
@@ -32,11 +32,11 @@ Many plugins warn you about usage, and some write a handoff note. auto-pause is 
 
 "Not shown" means we found no sign of it, not that it's missing. Based on each project's own description and the code we read in October 2026; they may have changed since.
 
-auto-pause's check is strict: the note must point to the current version of your project, list every file you changed, and contain no passwords or keys. It also copies your last few messages into the note word for word, and if Claude runs out first, the plugin writes a basic note by itself.
+auto-pause's check is strict: the note must point to the current version of your project, list every file you changed, and contain no passwords or keys. It also copies your last few messages and Claude's todo list into the note word for word, and if Claude runs out first, the plugin writes a basic note by itself. When you resume, the plugin compares the note with your project and tells Claude what changed in between.
 
 The full comparison is in [docs/competitor-review.md](docs/competitor-review.md).
 
-Version 0.1.13. Still being tested.
+Version 0.1.14. Still being tested. See [CHANGELOG.md](CHANGELOG.md).
 
 ## What you need
 
@@ -72,9 +72,9 @@ Without this, Claude waits at the limit and then keeps going in the old chat, wh
 
 ## What happens
 
-- 15% left: nothing you can see. Claude is told to finish what it's doing and not start anything new.
-- 8% left: Claude stops and saves the note in a `.handoffs` folder in your project. Its last message shows when your limit resets and a message to copy (the "resume prompt").
-- For the weekly limit, the same happens at 10% and 3% left.
+- 7% left: nothing you can see. Claude is told to finish what it's doing and not start anything new.
+- 4% left: Claude stops and saves the note in a `.handoffs` folder in your project. Its last message shows when your limit resets and a message to copy (the "resume prompt").
+- For the weekly limit, the same happens at 3% and 2% left.
 
 If you're in another app, you get the usual notification when Claude stops. If the limit hits before Claude finishes its note, the plugin writes a shorter one by itself.
 
@@ -103,8 +103,8 @@ Then quit and reopen the Desktop app. Chats that were already open need `/reload
 
 In the Terminal app, run `claude`, type `/plugin configure auto-pause@k45sle`, then restart the Desktop app. The Desktop app has no `/plugin` command, so there you can ask Claude instead: "In my user settings, set pluginConfigs auto-pause@k45sle options pause_at_percent_left to 5, as a number." Numbers must not have quotes around them: `"5"` stops the plugin from loading, and `/auto-pause-status` disappears. The two you're most likely to change:
 
-- `pause_at_percent_left` (default 8): when Claude stops and saves its note.
-- `warn_at_percent_left` (default 15): when Claude is told to wrap up. Keep it above the pause number.
+- `pause_at_percent_left` (default 4): when Claude stops and saves its note.
+- `warn_at_percent_left` (default 7): when Claude is told to wrap up. Keep it above the pause number.
 
 The full list is in [docs/details.md](docs/details.md#all-settings).
 

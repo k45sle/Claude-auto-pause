@@ -6,12 +6,13 @@ Testing write-ups: `docs/phase*-results.md` has what was tested in each phase, [
 
 ## How it works
 
-1. At 15% left in the 5-hour window (10% weekly) it adds a warning to the next tool result.
-2. At 8% left (3% weekly) it tells Claude to finish or revert the current step and write a handoff to an exact path in `.handoffs/`. That path and a resume prompt with absolute paths are in the notice. Subagents are told to return, and new ones are refused.
+1. At 7% left in the 5-hour window (3% weekly) it adds a warning to the next tool result.
+2. At 4% left (2% weekly) it tells Claude to finish or revert the current step and write a handoff to an exact path in `.handoffs/`. That path and a resume prompt with absolute paths are in the notice. Subagents are told to return, and new ones are refused.
 3. After 5 more tool calls, or once usage rises 3 more percent, every tool is blocked except writing the handoff and a few reads (Read, Grep, Glob, read-only git).
 4. When Claude writes the handoff, the plugin checks it: the resume prompt is there verbatim, the required sections exist, the current commit and every uncommitted file are named (up to 15), it fits the word budget, and nothing looks like a secret. A valid handoff unblocks the tools and Claude ends its turn with the resume prompt.
-5. Once the handoff passes, the plugin adds a "Session facts" section at the end: your last few messages, word for word, and the files Claude edited. It reads these from the session, so no model call is spent, and the next session works from what you asked for rather than Claude's summary of it.
-6. If Claude ends the turn twice without a valid handoff, or the limit hits first, the plugin writes a short handoff itself from what it can read without Claude (last request, edited files, branch, commit, uncommitted files) and sends a desktop notification. This needs no model call. After the reset you can start from that one, or go back to the old session and ask it to finish the handoff.
+5. Once the handoff passes, the plugin adds a "Session facts" section at the end: your last few messages, word for word, the files Claude edited, Claude's todo list as it stood, and a snapshot of the repo (the commit, the uncommitted files, and a fingerprint of their changes). It reads these from the session and from git, so no model call is spent, and the next session works from what you asked for rather than Claude's summary of it.
+6. When a new session opens the handoff, the plugin compares that snapshot with the repo as it is now and tells Claude the result: either that nothing moved, or exactly what did (new commits, files committed or reverted, changed contents, or a newer handoff for the same project). Changes to files git doesn't track yet are seen by name only.
+7. If Claude ends the turn twice without a valid handoff, or the limit hits first, the plugin writes a short handoff itself from what it can read without Claude (last request, edited files, branch, commit, uncommitted files) and sends a desktop notification. This needs no model call. After the reset you can start from that one, or go back to the old session and ask it to finish the handoff.
 
 The handoff is a short Markdown file: the goal, what is done, what is left, the next steps, and the state of your files.
 
@@ -47,10 +48,10 @@ With `autoContinueAtUsageLimit` on (the default), Claude Code waits at the limit
 
 | Setting | Default | What it does |
 |---|---|---|
-| `pause_at_percent_left` | 8 | Pause and write a handoff when this much of the 5-hour limit is left (8 means at 92% used) |
-| `warn_at_percent_left` | 15 | Tell Claude to wrap up its current step at this much left |
-| `weekly_pause_at_percent_left` | 3 | The same pause for the 7-day limit |
-| `weekly_warn_at_percent_left` | 10 | The same warning for the 7-day limit |
+| `pause_at_percent_left` | 4 | Pause and write a handoff when this much of the 5-hour limit is left (4 means at 96% used) |
+| `warn_at_percent_left` | 7 | Tell Claude to wrap up its current step at this much left |
+| `weekly_pause_at_percent_left` | 2 | The same pause for the 7-day limit |
+| `weekly_warn_at_percent_left` | 3 | The same warning for the 7-day limit |
 | `gate_after_tool_calls` | 5 | Tool calls Claude gets after the pause notice to finish or undo its current step |
 | `gate_after_points` | 3 | How many more percent of usage Claude may spend after the pause notice, if it runs out before the tool calls do |
 | `handoff_dir` | `.handoffs` | Folder for handoffs, inside the project, using letters, digits, `.`, `_`, `-` and `/`. Use a folder that holds nothing else: the plugin keeps it out of git. `.git` and `.claude` are not allowed |

@@ -67,6 +67,27 @@ const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit'])
 const AGENT_TOOLS = new Set(['Agent', 'Task'])
 // The mod appends this section after a handoff passes; validation ignores it.
 const FACTS = '## Session facts (added by auto-pause, read from the session)'
+// One line in the appended section that the mod reads back when a later session opens the handoff.
+const SNAP = 'Snapshot (auto-pause compares this with the repo when the handoff is read):'
+type Snap = { head: string; diff: string; count: number; files: string[] }
+// Not cryptography: a 53-bit fingerprint (cyrb53) that tells "same diff" from "different diff".
+const fingerprint = (s: string) => {
+  let a = 0xdeadbeef, b = 0x41c6ce57
+  for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 2654435761); b = Math.imul(b ^ c, 1597334677) }
+  a = Math.imul(a ^ (a >>> 16), 2246822507) ^ Math.imul(b ^ (b >>> 13), 3266489909)
+  b = Math.imul(b ^ (b >>> 16), 2246822507) ^ Math.imul(a ^ (a >>> 13), 3266489909)
+  return (4294967296 * (2097151 & b) + (a >>> 0)).toString(16)
+}
+const snapLine = (s: Snap) => `${SNAP} HEAD ${s.head} · diff ${s.diff} · files ${s.count} ${JSON.stringify(s.files)}`
+// Only from the appended section, and only a well-formed line: the head goes into a git argument.
+const readSnap = (text: string): Snap | undefined => {
+  const m = new RegExp(`^${esc(SNAP)} HEAD ([0-9a-f]{4,40}) · diff ([0-9a-f]{1,16}) · files (\\d+) (\\[.*\\])$`, 'm').exec(text.split(FACTS).slice(1).join(FACTS))
+  if (!m) return
+  try {
+    const files: unknown = JSON.parse(m[4]!)
+    return Array.isArray(files) && files.every(f => typeof f === 'string') ? { head: m[1]!, diff: m[2]!, count: Number(m[3]), files: files as string[] } : undefined
+  } catch { return }
+}
 const MAX_DIRTY = 15 // more uncommitted files than this is a bulk change; don't demand each by name
 
 const redact = (s: string) => SECRETS.reduce((t, re) => t.replace(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g'), '[redacted]'), s)
@@ -101,8 +122,8 @@ function config(o: Record<string, unknown>) {
     if (!unset) notes.push(`${k} "${String(raw)}" is out of range; using ${d}.`)
     return d
   }
-  const warn = { five_hour: num('warn_at_percent_left', 15), seven_day: num('weekly_warn_at_percent_left', 10) }
-  const pause = { five_hour: num('pause_at_percent_left', 8), seven_day: num('weekly_pause_at_percent_left', 3) }
+  const warn = { five_hour: num('warn_at_percent_left', 7), seven_day: num('weekly_warn_at_percent_left', 3) }
+  const pause = { five_hour: num('pause_at_percent_left', 4), seven_day: num('weekly_pause_at_percent_left', 2) }
   for (const [k, w, p] of [['', warn.five_hour, pause.five_hour], ['weekly_', warn.seven_day, pause.seven_day]] as const)
     if (w <= p) notes.push(`${k}warn_at_percent_left ${w} is not above ${k}pause_at_percent_left ${p}, so there is no separate warning.`)
   return {
@@ -125,6 +146,8 @@ let pending: string | undefined
 let owner: Kind | undefined // the window behind the current warn or pause
 let pause: { kind: Kind; usedAtNotice: number; calls: number; root: string; path: string; prompt: string; notice: string; stopBlocked: boolean; head?: string; fixes?: number; rescues?: number; outside?: boolean; gitRisk?: boolean } | undefined
 let storeKey: string | undefined // `session:<id>`, set at session.start
+// Handoffs already compared (or written) in this session: one check per file, and none after this session's own edits began to show.
+const checked = new Set<string>()
 
 // Saved after every change so a /reload-plugins (Desktop reloads every open session) keeps a pause.
 let savedJson = ''
@@ -141,7 +164,7 @@ async function save($: $) {
 function resetState() {
   phase = 'normal'; owner = undefined; pending = undefined; pause = undefined
   hasData = false; saidNoData = false; simulated = undefined; simulateAfter = undefined
-  windows.clear(); savedJson = ''
+  windows.clear(); savedJson = ''; checked.clear()
 }
 
 async function restore($: $) {
@@ -161,6 +184,44 @@ async function git($: $, ...a: string[]) {
     if (r) return r.exitCode === 0 ? r.stdout.trim() : ''
   }
   return ''
+}
+
+const MAX_SNAP_FILES = 100
+// The repo as git sees it now: commit, uncommitted paths, and a fingerprint of the tracked changes.
+// Untracked files count by name only. --no-ext-diff/--no-textconv: a repo's config must not run a program.
+async function snapshot($: $): Promise<Snap | undefined> {
+  const head = await git($, 'rev-parse', '--short', 'HEAD')
+  if (!head) return
+  const files = dirtyPaths(await git($, '-c', 'core.quotePath=false', 'status', '--porcelain'))
+  return { head, diff: fingerprint(await git($, 'diff', '--no-ext-diff', '--no-textconv', 'HEAD')), count: files.length, files: files.slice(0, MAX_SNAP_FILES) }
+}
+
+// The check the resume prompt asks the model to make, made by git instead: what moved since the handoff was written.
+async function resumeCheck($: $, was: Snap, file: string, root: string) {
+  const now = await snapshot($)
+  if (!now) return `auto-pause resume check: ${file} was written at HEAD ${was.head}, but this folder has no git commit now. Tell the user before editing.`
+  const changes: string[] = []
+  const moved = !now.head.startsWith(was.head) && !was.head.startsWith(now.head)
+  if (moved) {
+    const behind = await git($, 'rev-list', '--count', `HEAD..${was.head}`)
+    const ahead = await git($, 'rev-list', '--count', `${was.head}..HEAD`)
+    changes.push(`HEAD was ${was.head}, is now ${now.head} (${behind === '0' ? `${ahead} commit${ahead === '1' ? '' : 's'} since: \`git log ${was.head}..HEAD\`` : behind ? 'the old commit is not an ancestor: another branch, a reset or a rebase' : 'the old commit is not in this repository'})`)
+  }
+  const list = (f: string[]) => `${f.slice(0, 12).join(', ')}${f.length > 12 ? `, +${f.length - 12} more` : ''}`
+  if (was.count <= MAX_SNAP_FILES && now.count <= MAX_SNAP_FILES) {
+    const gone = was.files.filter(f => !now.files.includes(f)), added = now.files.filter(f => !was.files.includes(f))
+    if (gone.length) changes.push(`no longer uncommitted (committed, reverted or deleted): ${list(gone)}`)
+    if (added.length) changes.push(`newly uncommitted: ${list(added)}`)
+    if (!moved && !gone.length && !added.length && was.diff !== now.diff) changes.push('the same files are uncommitted, but their contents changed (`git diff`)')
+  } else if (was.count !== now.count) changes.push(`${was.count} files were uncommitted, ${now.count} are now`)
+  else if (!moved && was.diff !== now.diff) changes.push('the uncommitted contents changed (`git diff`)')
+  // An older prompt pasted by mistake: the store knows the newest auto-pause handoff for this project. Names start with a timestamp, so they sort by time.
+  const last = (await $.store.get(`last:${root}`).catch(() => undefined)) as { path?: string } | undefined
+  const base = (p: string) => p.split('/').pop()!
+  if (last?.path && last.path !== file && base(last.path) > base(file) && (await $.fs.exists(last.path).catch(() => false))) changes.push(`a newer handoff exists for this project: ${last.path}. Ask the user which one to resume from`)
+  return changes.length
+    ? `auto-pause resume check: the project has CHANGED since this handoff was written:\n${changes.map(c => `- ${c}`).join('\n')}\nTell the user what changed before editing, and trust the repo over the handoff where they disagree.`
+    : `auto-pause resume check: the repo matches this handoff's snapshot (HEAD ${now.head}, same uncommitted files and contents). Its "Repo state" is current.`
 }
 
 // stat without resolve sees a link even when it leads nowhere, which exists() would call absent.
@@ -362,8 +423,9 @@ async function finishPause($: $, outcome: Outcome = 'verified') {
 }
 
 // What the session itself shows, with no model call: the user's own last requests (so the next
-// session works from their words, not a paraphrase) and the files edited. Harness text that arrives
-// as a user message (system reminders, command tags, hook feedback) is skipped.
+// session works from their words, not a paraphrase), the files edited, and the todo list (Claude's
+// own plan as it stood, not a paraphrase). Harness text that arrives as a user message (system
+// reminders, command tags, hook feedback) is skipped.
 async function sessionFacts($: $, root: string) {
   const msgs = await $.session.messages().catch(() => [])
   // Redact before flattening: some secret patterns match only at the start of a line.
@@ -374,15 +436,22 @@ async function sessionFacts($: $, root: string) {
     .filter(t => t && !/^(?:[\w ]{0,30}:\s*)?AUTO-PAUSE[: ]/.test(t)).slice(-3).map(t => flat(redact(t)).slice(0, 400))
   const edited = [...new Set(msgs.flatMap(m => m.toolUses ?? []).filter(u => FILE_TOOLS.has(u.tool)).map(u => String(u.input.file_path)))]
     .filter(f => !f.includes(`/${cfg.dir}/`)).map(f => (f.startsWith(`${root}/`) ? f.slice(root.length + 1) : f))
-  return { asks, edited }
+  const plan = msgs.flatMap(m => m.toolUses ?? []).filter(u => u.tool === 'TodoWrite' && Array.isArray(u.input.todos)).pop()?.input.todos as
+    { content?: unknown; status?: unknown }[] | undefined
+  const todos = (plan ?? []).slice(0, 20)
+    .map(t => `${t.status === 'completed' ? '[x]' : t.status === 'in_progress' ? '[>]' : '[ ]'} ${flat(redact(String(t.content))).slice(0, 120)}`)
+  return { asks, edited, todos }
 }
 
 async function appendFacts($: $, file: string, text: string, root: string) {
-  const { asks, edited } = await sessionFacts($, root)
-  if (!asks.length && !edited.length) return
+  const { asks, edited, todos } = await sessionFacts($, root)
+  const snap = await snapshot($)
+  if (!asks.length && !edited.length && !todos.length && !snap) return
   const lines = [FACTS]
   if (asks.length) lines.push(`Last user request${asks.length > 1 ? 's, oldest first' : ''} (verbatim, trimmed):`, ...asks.map(a => `- "${a}"`))
   if (edited.length) lines.push(`Files edited in the old session: ${edited.slice(0, 30).join(', ')}${edited.length > 30 ? `, +${edited.length - 30} more` : ''}`)
+  if (todos.length) lines.push(`Todo list at the pause ([x] done, [>] in progress, [ ] not started): ${todos.join(' · ')}`)
+  if (snap) lines.push(snapLine(snap))
   await $.fs.write(file, `${text.split(FACTS)[0]!.trimEnd()}\n\n${lines.join('\n')}\n`).catch(() => {})
 }
 
@@ -396,8 +465,10 @@ async function writeFallback($: $, why: string) {
     await $.ui.notify(`The handoff folder ${cfg.dir} leads outside the project, so no facts-only handoff was written.`, { title: 'auto-pause' }).catch(() => undefined)
     return
   }
-  const { asks, edited } = await sessionFacts($, pause.root)
+  const { asks, edited, todos } = await sessionFacts($, pause.root)
   const ask = asks.at(-1)
+  // The first todo still open, without its [x]/[>]/[ ] prefix.
+  const first = todos.find(t => !t.startsWith('[x] '))?.replace(/^\[.\] /, '')
   const here = await $.fs.stat(pause.path).catch(() => undefined)
   const partial = here?.kind === 'file' && !here.isLink
   if (here) {
@@ -410,6 +481,7 @@ async function writeFallback($: $, why: string) {
   }
   const branch = await git($, 'branch', '--show-current')
   const status = (await git($, '-c', 'core.quotePath=false', 'status', '--porcelain')).split('\n').filter(Boolean)
+  const snap = await snapshot($)
   const text = [
     '# Handoff: facts only (written by auto-pause)',
     '',
@@ -419,14 +491,18 @@ async function writeFallback($: $, why: string) {
     '',
     '## Goal', ask ? `Last user request (verbatim, first 400 characters): ${ask}` : 'Unknown: read the old session.',
     '',
-    '## Status', edited.length ? `Files edited in the old session: ${edited.slice(0, 30).join(', ')}` : 'Unknown.',
+    '## Status', ...(edited.length || todos.length
+      ? [edited.length ? `Files edited in the old session: ${edited.slice(0, 30).join(', ')}` : '', todos.length ? `Todo list at the pause ([x] done, [>] in progress, [ ] not started): ${todos.join(' · ')}` : ''].filter(Boolean)
+      : ['Unknown.']),
     '',
-    '## Next steps', '1. Run `git status` and `git diff` to see the unfinished change, then confirm the plan with the user before editing.',
+    '## Next steps', `1. Run \`git status\` and \`git diff\` to see the unfinished change, then confirm the plan with the user before editing.${first ? ` The first unfinished todo was: ${first}.` : ''}`,
     '',
     '## Repo state', pause.head ? `${branch || '(detached)'} · HEAD ${(await git($, 'rev-parse', '--short', 'HEAD')) || pause.head}` : 'not a git repository', ...status.slice(0, 40).map(l => `- ${l}`),
+    ...(snap ? ['', FACTS, snapLine(snap)] : []),
     '',
   ].join('\n')
   const wrote = await $.fs.write(pause.path, text).then(() => true, () => false)
+  if (wrote) checked.add(pause.path)
   await finishPause($, 'fallback')
   // Toasts do not render in Desktop (Phase 0); a native notification does.
   await $.ui.notify(wrote ? `Facts-only handoff written: ${pause.path}. /auto-pause-status shows the resume prompt.` : `Could not write the facts-only handoff to ${pause.path}. The tools are unblocked.`, { title: 'auto-pause' }).catch(() => undefined)
@@ -523,6 +599,7 @@ export const register: Register = (on, options) => {
       } else if (text !== undefined && !problems.length) {
         await appendFacts($, String(file), text, root || (await $.session.cwd()))
         if (active) await finishPause($)
+        checked.add(abs)
         context.push(`AUTO-PAUSE: handoff OK. End your turn now with the handoff path${active ? `, when usage resets` : ''}, the "Next session" line, and the resume prompt verbatim in a \`\`\`text block.`)
       } else if (problems.length && active && (pause!.fixes = (pause!.fixes ?? 0) + 1) >= MAX_FIXES) {
         // Never lock a session on validation: after three tries the gate opens, logged as released.
@@ -531,6 +608,14 @@ export const register: Register = (on, options) => {
       } else if (problems.length) {
         context.push(`AUTO-PAUSE: the handoff needs fixes. Make them all in one Edit:\n${problems.map(p => `- ${p}`).join('\n')}`)
       }
+    }
+    // A later session opening a handoff: compare its snapshot with the repo, so the "does git match" check does not rest on the model alone.
+    if (e.tool === 'Read' && !r.isError && !active && isHandoffFile(file)) {
+      const abs = isAbs(String(file)) ? String(file) : `${await $.session.cwd()}/${file}`
+      const root = (await git($, 'rev-parse', '--show-toplevel')) || (await $.session.cwd())
+      const was = checked.has(abs) || !(await inside($, abs, root)) ? undefined : readSnap((await $.fs.read(abs).catch(() => '')) ?? '')
+      checked.add(abs)
+      if (was) context.push(await resumeCheck($, was, abs, root))
     }
     if (pending) { context.unshift(pending); pending = undefined }
     await save($)
