@@ -169,8 +169,12 @@ const taken = async ($: $, p: string) => (await $.fs.stat(p).catch(() => undefin
 async function inside($: $, p: string, root: string) {
   const r = (await $.fs.stat(root, { resolve: true }).catch(() => undefined))?.realPath
   const x = (await $.fs.stat(p, { resolve: true }).catch(() => undefined))?.realPath
-  return r !== undefined && x !== undefined && x.startsWith(`${r}/`)
+  if (r === undefined || x === undefined) return false
+  // Windows: realPath may use `\`, and drive paths ignore case.
+  const n = (s: string) => { const f = s.replace(/\\/g, '/'); return /^[A-Za-z]:/.test(f) ? f.toLowerCase() : f }
+  return n(x).startsWith(`${n(r)}/`)
 }
+const isAbs = (p: string) => /^(?:[A-Za-z]:)?[\\/]/.test(p)
 
 const isHandoffFile = (p: unknown) =>
   typeof p === 'string' && p.endsWith('.md') && !p.split('/').includes('..') &&
@@ -466,6 +470,13 @@ export const register: Register = (on, options) => {
       simulateAfter = undefined
       await onReading($, [])
     }
+    // The window the pause came from has reset: no reading may arrive to say so, so end the pause here.
+    const pw = pause && windows.get(pause.kind)
+    if ((phase === 'pausing' || phase === 'gated') && pw?.resetsAt && Date.parse(pw.resetsAt) <= (await $.clock.now())) {
+      await logOutcome($, 'reset')
+      phase = 'normal'; owner = undefined; pause = undefined; pending = undefined
+      await save($)
+    }
     const active = phase === 'pausing' || phase === 'gated'
     const refuse = async (deny: string) => {
       await save($)
@@ -504,7 +515,7 @@ export const register: Register = (on, options) => {
       // The notice's prompt, message and HEAD belong to a pause in progress only; a later handoff gets its own.
       const p = active ? pause : undefined
       const root = p?.root ?? (await git($, 'rev-parse', '--show-toplevel'))
-      const abs = String(file).startsWith('/') ? String(file) : `${await $.session.cwd()}/${file}`
+      const abs = isAbs(String(file)) ? String(file) : `${await $.session.cwd()}/${file}`
       const want = p?.prompt ?? resumePrompt(root || (await $.session.cwd()), abs, !!root)
       const problems = text === undefined ? [] : validate(text, want, (p ? p.head : root) ? await git($, 'rev-parse', '--short', 'HEAD') : '', root ? dirtyPaths(await git($, '-c', 'core.quotePath=false', 'status', '--porcelain')) : [], p, root)
       if (text !== undefined && !(await inside($, abs, root || (await $.session.cwd())))) {
