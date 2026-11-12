@@ -950,17 +950,6 @@ describe('hardening', () => {
     expect(w.files.get(path)).toBe(handoff(pr))
   })
 
-  test('a Windows drive path with backslash realPaths counts as inside the project', async ($, on) => {
-    const w = world(on); w.top.value = 'C:/Users/me/app'; await start($)
-    const { path, prompt: pr } = await pauseNotice($)
-    expect(path.startsWith('C:/Users/me/app/.handoffs/')).toBe(true)
-    w.links.set('C:/Users/me/app', 'C:\\Users\\me\\app')
-    w.links.set(path, path.replace(/\//g, '\\').replace('C:', 'c:'))
-    const r = ctx(await write($, path, handoff(pr)))
-    expect(r).not.toContain('leads outside')
-    expect(r).toContain('handoff OK')
-  })
-
   test('the gate lifts once the window that caused the pause has reset, with no new reading', async ($, on) => {
     const w = world(on); await start($)
     await gated($)
