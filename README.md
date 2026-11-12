@@ -16,7 +16,7 @@ Claude has two usage limits: one resets every 5 hours, the other every week. Whe
 - The new chat starts from the right place, because the note is checked against your actual files.
 - You can pick a different model for the new chat, such as a cheaper one. Next to the resume prompt, Claude suggests a model and effort for what is left, such as "Next session: Sonnet - medium". The note is a plain text file any model can read. Switching models in the old chat would make the new model re-read the whole conversation at full price.
 
-The cost: Claude spends part of your last 4% writing the note, and you paste the resume prompt yourself. We haven't yet measured how much usage this saves in real use.
+The cost: Claude spends part of your last 4% writing the note, and you paste the resume prompt yourself.
 
 ## How it's different
 
