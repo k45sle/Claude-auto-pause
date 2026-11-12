@@ -5,7 +5,7 @@ const ROOT = '/Users/me/My Projects/app'
 const RESETS = '2026-10-19T22:00:00.000Z'
 const NEXT_RESETS = '2026-10-20T03:00:00.000Z'
 
-type World = { files: Map<string, string>; calls: string[]; notes: string[]; store: Map<string, unknown>; head: { value: string }; ask: { value: string }; id: { value: string }; status: { value: string }; exclude: { value: string }; links: Map<string, string>; top: { value: string }; config: { value: string }; tracked: { value: string }; runs: string[]; toasts: string[] }
+type World = { files: Map<string, string>; calls: string[]; notes: string[]; store: Map<string, unknown>; head: { value: string }; ask: { value: string }; id: { value: string }; status: { value: string }; exclude: { value: string }; links: Map<string, string>; top: { value: string }; config: { value: string }; tracked: { value: string }; runs: string[]; toasts: string[]; now: { value: number } }
 
 // The engine beneath the plugin: git in a repo with one change, files in memory,
 // every tool answering ok (Write/Edit store their text so validation can read it).
@@ -25,7 +25,8 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   const runs: string[] = [] // every git argv, as run
   const toasts: string[] = []
   const failWrite = { value: '' } // fs.write throws for this path
-  mock.clock(on, { now: Date.parse('2026-10-19T15:02:00Z') })
+  const now = { value: Date.parse('2026-10-19T15:02:00Z') }
+  on('clock.now', () => ({ value: now.value }))
   // A store the test can read back, so saved state can be checked.
   const kv = new Map<string, unknown>(Object.entries(store))
   on('store.get', ($, e) => ({ value: structuredClone(kv.get(e.key)) }))
@@ -91,7 +92,7 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   on('ui.notify', ($, e) => (notes.push(e.text), { value: { isSent: true, channel: 'test' } }) as never)
   on('session.id', () => ({ value: id.value }))
   on('ui.toast', ($, e) => (toasts.push(e.text), { value: undefined }) as never)
-  return { files, calls, notes, store: kv, head, ask, id, status, exclude, links, top, config, tracked, runs, toasts, failWrite }
+  return { files, calls, notes, store: kv, head, ask, id, status, exclude, links, top, config, tracked, runs, toasts, failWrite, now }
 }
 
 const reading = (used: number, kind = 'five_hour', resetsAt = RESETS) => ({
@@ -947,6 +948,25 @@ describe('hardening', () => {
     expect(r).toContain('leads outside the project, so it was not checked or extended')
     expect(r).not.toContain('handoff OK')
     expect(w.files.get(path)).toBe(handoff(pr))
+  })
+
+  test('a Windows drive path with backslash realPaths counts as inside the project', async ($, on) => {
+    const w = world(on); w.top.value = 'C:/Users/me/app'; await start($)
+    const { path, prompt: pr } = await pauseNotice($)
+    expect(path.startsWith('C:/Users/me/app/.handoffs/')).toBe(true)
+    w.links.set('C:/Users/me/app', 'C:\\Users\\me\\app')
+    w.links.set(path, path.replace(/\//g, '\\').replace('C:', 'c:'))
+    const r = ctx(await write($, path, handoff(pr)))
+    expect(r).not.toContain('leads outside')
+    expect(r).toContain('handoff OK')
+  })
+
+  test('the gate lifts once the window that caused the pause has reset, with no new reading', async ($, on) => {
+    const w = world(on); await start($)
+    await gated($)
+    expect((await $.tool.call(bash)).deny).toContain('AUTO-PAUSE gate')
+    w.now.value = Date.parse(RESETS) + 60_000
+    expect((await $.tool.call(bash)).deny).toBeUndefined()
   })
 
   test('a handoff after a finished pause is checked against its own prompt', async ($, on) => {
