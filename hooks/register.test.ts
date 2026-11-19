@@ -5,7 +5,7 @@ const ROOT = '/Users/me/My Projects/app'
 const RESETS = '2026-10-19T22:00:00.000Z'
 const NEXT_RESETS = '2026-10-20T03:00:00.000Z'
 
-type World = { files: Map<string, string>; calls: string[]; notes: string[]; store: Map<string, unknown>; head: { value: string }; ask: { value: string }; id: { value: string }; status: { value: string }; exclude: { value: string }; links: Map<string, string>; top: { value: string }; config: { value: string }; tracked: { value: string }; runs: string[]; toasts: string[]; now: { value: number }; diff: { value: string }; ahead: { value: string } }
+type World = { files: Map<string, string>; calls: string[]; notes: string[]; store: Map<string, unknown>; head: { value: string }; ask: { value: string }; id: { value: string }; status: { value: string }; exclude: { value: string }; links: Map<string, string>; top: { value: string }; config: { value: string }; tracked: { value: string }; runs: string[]; toasts: string[]; now: { value: number }; diff: { value: string }; ahead: { value: string }; msgs: { value?: unknown[] } }
 
 // The engine beneath the plugin: git in a repo with one change, files in memory,
 // every tool answering ok (Write/Edit store their text so validation can read it).
@@ -88,7 +88,8 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   on('tool.check', ($, e) => ({ decision: e.tool_use_id ? 'allow' as const : 'ask' as const }))
   on('classic.Stop', () => ({}))
   on('classic.StopFailure', () => ({}))
-  on('session.messages', () => ({ value: [
+  const msgs: { value?: unknown[] } = {}
+  on('session.messages', () => ({ value: msgs.value ?? [
     { role: 'user', text: 'Start with the parser module', toolUses: [] },
     { role: 'user', text: ask.value, toolUses: [] },
     { role: 'user', text: '<system-reminder>harness text</system-reminder>', toolUses: [] },
@@ -97,7 +98,7 @@ function world(on: On, env: Record<string, string> = {}, git = true, store: Reco
   on('ui.notify', ($, e) => (notes.push(e.text), { value: { isSent: true, channel: 'test' } }) as never)
   on('session.id', () => ({ value: id.value }))
   on('ui.toast', ($, e) => (toasts.push(e.text), { value: undefined }) as never)
-  return { files, calls, notes, store: kv, head, ask, id, status, exclude, links, top, config, tracked, runs, toasts, failWrite, now, diff, ahead }
+  return { files, calls, notes, store: kv, head, ask, id, status, exclude, links, top, config, tracked, runs, toasts, failWrite, now, diff, ahead, msgs }
 }
 
 const reading = (used: number, kind = 'five_hour', resetsAt = RESETS) => ({
@@ -1114,6 +1115,20 @@ describe('resume check', () => {
     expect(text).toContain('Snapshot (auto-pause compares this with the repo when the handoff is read): HEAD abc1234 · diff ')
     expect(text).toContain('files 3 ["src/a.ts","src/c.ts","src/b.ts"]')
     expect(text).toContain('Todo list at the pause ([x] done, [>] in progress, [ ] not started): [x] Parse dates · [>] Wire the parser · [ ] Docs')
+  })
+
+  test('the desktop task list (update_plan) is replayed into the todo list', async ($, on) => {
+    const w = world(on)
+    const plan = (input: Record<string, unknown>) => ({ tool_use_id: 'p', tool: 'mcp__ccd_turn__update_plan', input })
+    w.msgs.value = [
+      { role: 'user', text: 'Fix the date parser', toolUses: [] },
+      { role: 'assistant', text: '', toolUses: [
+        plan({ items: [{ content: 'Read parser', status: 'in_progress' }, { content: 'Fix parser', status: 'pending' }, { content: 'Docs', status: 'pending' }, { content: 'Release', status: 'pending' }] }),
+        plan({ advance: true }), plan({ done: [2], start: 4 })] },
+    ]
+    await start($)
+    const path = await writeHandoff($)
+    expect(w.files.get(path)!).toContain('Todo list at the pause ([x] done, [>] in progress, [ ] not started): [x] Read parser · [x] Fix parser · [ ] Docs · [>] Release')
   })
 
   test('a new session reading it with nothing changed is told the repo matches', async ($, on) => {

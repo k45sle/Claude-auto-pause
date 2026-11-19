@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.15
+
+### Handoffs get a "Don't undo" section, and the task list works in the desktop app
+
+- The handoff template has a new optional section, Don't undo, for changes that look like mistakes but are intended (a disabled check, an odd workaround). The next session leaves them alone instead of "fixing" them. Taken from the session-relaunch handoff.
+- The task list copied into the note now also comes from the desktop app's task list (update_plan), not only from the terminal's TodoWrite. Before, a desktop session's note had no task list.
+
 ## 0.1.14
 
 ### The plugin now checks the handoff when you resume, not only when it is written

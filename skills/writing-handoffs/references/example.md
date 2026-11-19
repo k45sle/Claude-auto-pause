@@ -34,6 +34,9 @@ If the user tells you something in this session that differs from the handoff, f
 ## Decisions (don't relitigate)
 - No retry on 5xx: the user wants 5xx to surface immediately.
 
+## Don't undo
+- `withRetry` rethrows AbortError without retrying (src/retry.ts:17): a cancelled request must stay cancelled.
+
 ## Dead ends
 - Tried p-retry; dropped because it cannot read response headers.
 

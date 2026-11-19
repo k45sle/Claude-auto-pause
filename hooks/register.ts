@@ -436,11 +436,33 @@ async function sessionFacts($: $, root: string) {
     .filter(t => t && !/^(?:[\w ]{0,30}:\s*)?AUTO-PAUSE[: ]/.test(t)).slice(-3).map(t => flat(redact(t)).slice(0, 400))
   const edited = [...new Set(msgs.flatMap(m => m.toolUses ?? []).filter(u => FILE_TOOLS.has(u.tool)).map(u => String(u.input.file_path)))]
     .filter(f => !f.includes(`/${cfg.dir}/`)).map(f => (f.startsWith(`${root}/`) ? f.slice(root.length + 1) : f))
-  const plan = msgs.flatMap(m => m.toolUses ?? []).filter(u => u.tool === 'TodoWrite' && Array.isArray(u.input.todos)).pop()?.input.todos as
-    { content?: unknown; status?: unknown }[] | undefined
-  const todos = (plan ?? []).slice(0, 20)
+  const plan = todoList(msgs.flatMap(m => m.toolUses ?? []))
+  const todos = plan.slice(0, 20)
     .map(t => `${t.status === 'completed' ? '[x]' : t.status === 'in_progress' ? '[>]' : '[ ]'} ${flat(redact(String(t.content))).slice(0, 120)}`)
   return { asks, edited, todos }
+}
+
+// The CLI keeps its plan with TodoWrite (whole list each call); the desktop app with update_plan, which sends the
+// whole list once ({items}) and then only moves ({advance}, {done: [n], start: n}, 1-based), so replay those.
+type Todo = { content?: unknown; status?: unknown }
+function todoList(uses: { tool: string; input: Record<string, unknown> }[]): Todo[] {
+  let plan: Todo[] = []
+  for (const u of uses) {
+    if (u.tool === 'TodoWrite' && Array.isArray(u.input.todos)) plan = u.input.todos as Todo[]
+    else if (/(?:^|__)update_plan$/.test(u.tool)) {
+      if (Array.isArray(u.input.items)) { plan = (u.input.items as Todo[]).map(t => ({ ...t })); continue }
+      const set = (i: unknown, status: string) => { if (typeof i === 'number' && plan[i - 1]) plan[i - 1] = { ...plan[i - 1], status } }
+      if (Array.isArray(u.input.done)) for (const i of u.input.done) set(i, 'completed')
+      if (u.input.advance === true) {
+        const cur = plan.findIndex(t => t.status === 'in_progress')
+        if (cur >= 0) set(cur + 1, 'completed')
+        const next = plan.findIndex((t, i) => i > cur && t.status === 'pending')
+        if (next >= 0) set(next + 1, 'in_progress')
+      }
+      if (u.input.start !== undefined) set(u.input.start, 'in_progress')
+    }
+  }
+  return plan
 }
 
 async function appendFacts($: $, file: string, text: string, root: string) {

@@ -61,6 +61,9 @@ Resume prompt (paste into a new Code session):
 ## Decisions (don't relitigate)
 - <decision>: <reason>
 
+## Don't undo
+- <change that looks wrong but is intended>: <why>
+
 ## Dead ends
 - Tried <X>; dropped because <Y>
 
@@ -79,7 +82,7 @@ Resume prompt (paste into a new Code session):
 - Next step 1 must be doable as written, by someone who has read nothing else: name the file and the change, or give the exact command.
 - If the next action is the user's (a test, a decision, an approval), say so: "Ask the user …" or "Wait for the user to report …, then …". Never "the user does X" with nothing for the session to do.
 - Point to code by `path:line` or function name. Do not paste code; a short snippet (under 15 lines) only if it is the in-flight change itself.
-- Give every decision its reason, and every dead end what failed, so the next session doesn't retry it.
+- Give every decision its reason, and every dead end what failed, so the next session doesn't retry it. Put a change that looks like a mistake but is intended (a disabled check, an odd workaround, a deleted test) under Don't undo, so the next session doesn't "fix" it.
 - A changed-file list says nothing about remote state. If an outside operation's result is unconfirmed, Next step 1 is to check it with its id, and to retry only if that check shows it did not happen.
 - Before any outside action the handoff says was approved (deploy, push, send), the next session confirms the approval still stands: a newer user message or the operation's live status wins over the handoff.
 - Name every uncommitted file and its state. The plugin checks this against `git status`.
