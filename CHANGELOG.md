@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+### Optional handoff when the chat gets long
+
+- New setting `context_handoff_at_percent` (off by default). When the context window reaches it, Claude is asked to finish its step and write the usual checked handoff, then (in the Desktop app) to offer you the next session as a card. It asks again every `context_renudge_points` (default 5) until a handoff passes.
+- Unlike the usage pause, nothing is blocked and no tool is approved on Claude's behalf: context filling up is not a hard limit, and you are usually there.
+- This replaces the context nudge of the separate session-relaunch tool, so both kinds of handoff now share one template and one set of checks.
+
 ## 0.1.15
 
 ### Handoffs get a "Don't undo" section, and the task list works in the desktop app

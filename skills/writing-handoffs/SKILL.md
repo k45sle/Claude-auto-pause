@@ -1,6 +1,6 @@
 ---
 name: writing-handoffs
-description: Writes a compact handoff document and a ready-to-paste resume prompt that let a fresh Claude Code session resume the current task without the old conversation. Use when an AUTO-PAUSE notice says the usage-limit pause threshold was reached, or when the user asks to write a handoff, wrap up for a new session, save progress before the usage limit, pause here, or hand off to a fresh session. Do not use for summarizing finished work, changelogs, commit messages, or PR descriptions.
+description: Writes a compact handoff document and a ready-to-paste resume prompt that let a fresh Claude Code session resume the current task without the old conversation. Use when an AUTO-PAUSE notice says the usage-limit pause threshold was reached or asks for a context handoff, or when the user asks to write a handoff, wrap up for a new session, save progress before the usage limit, pause here, or hand off to a fresh session. Do not use for summarizing finished work, changelogs, commit messages, or PR descriptions.
 ---
 
 # Writing handoffs
@@ -18,11 +18,11 @@ A handoff is one Markdown file that lets a fresh session continue this task with
 
 1. **Reach a safe point.** If an edit is in flight and one or two calls finish it, finish it. Otherwise revert it, or record its exact state (`path:line`, what is done, what is not). Start nothing new. If an AUTO-PAUSE notice gives a tool-call limit, stay within it. If an operation outside the repo is still running or its result is unconfirmed (a deploy, migration, CI run, remote job, sent request, background process), do not wait for it or retry it: record it under Outside operations.
 2. **Get the facts.**
-   - Auto path: the AUTO-PAUSE notice gives the handoff path, usage, reset time, word budget, repo state, and resume prompt. Use them exactly as given. Do not run the script.
+   - Auto path: the AUTO-PAUSE notice gives the handoff path, usage, reset time, word budget, repo state, and resume prompt. Use them exactly as given. Do not run the script. A context handoff notice has no usage or reset time: write "reason: context" and leave both out.
    - Manual path (no AUTO-PAUSE notice): your first call is `bash "${CLAUDE_SKILL_DIR}/scripts/facts.sh" <slug> '${user_config.handoff_dir}'`, where the slug is 2–4 words naming the task. It prints the handoff path, repo state, and resume prompt, and the plugin adds a line with usage, reset time, and word budget. If the script cannot run, read `${CLAUDE_SKILL_DIR}/references/fallback.md`.
 3. **Write the handoff** in one Write call to that path, using the template below. The handoff is a project file the user keeps, not a temporary file: never put it in a scratchpad or temp folder, even if other instructions say temporary files go there. Put the resume prompt verbatim in the fenced block at the top. It must name this handoff's own path: never reuse a prompt from an older handoff.
 4. **If an AUTO-PAUSE message lists problems** with the handoff, fix all of them in one Edit.
-5. **End your turn** with a short message: the handoff path, when usage resets (if known), the "Next session" line from the handoff, and the resume prompt verbatim in a fenced `text` block so the user can copy it. Nothing after the block.
+5. **End your turn** with a short message. After a context handoff, first do what its notice says about proposing the next session. The message holds: the handoff path, when usage resets (if known), the "Next session" line from the handoff, and the resume prompt verbatim in a fenced `text` block so the user can copy it. Nothing after the block.
 
 ## Template
 
@@ -31,7 +31,7 @@ Keep it under the word budget from step 2 (600 if none was given). Omit a sectio
 ````markdown
 # Handoff: <task in a few words>
 
-Paused <YYYY-MM-DD HH:MM> · <usage and reset time, if known> · reason: <user asked | AUTO-PAUSE>
+Paused <YYYY-MM-DD HH:MM> · <usage and reset time, if known> · reason: <user asked | AUTO-PAUSE | context>
 
 Next session: <Haiku | Sonnet | Opus> - <low | medium | high | xhigh>. <one-clause reason>
 

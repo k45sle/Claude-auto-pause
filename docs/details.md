@@ -56,6 +56,8 @@ With `autoContinueAtUsageLimit` on (the default), Claude Code waits at the limit
 | `gate_after_points` | 3 | How many more percent of usage Claude may spend after the pause notice, if it runs out before the tool calls do |
 | `handoff_dir` | `.handoffs` | Folder for handoffs, inside the project, using letters, digits, `.`, `_`, `-` and `/`. Use a folder that holds nothing else: the plugin keeps it out of git. `.git` and `.claude` are not allowed |
 | `handoff_word_budget` | 600 | Target handoff length in words, resume prompt included |
+| `context_handoff_at_percent` | 0 (off) | Ask for a handoff when the chat's context window is this full, so a fresh session can take over before the chat gets long. Nothing is blocked or approved for Claude; in the Desktop app Claude proposes the next session as a card you click |
+| `context_renudge_points` | 5 | If no handoff was written, ask again each time context grows this many more percent. 0 asks once |
 
 A value out of range (a percentage above 100, for example) is ignored and the default is used. Claude Code still says "Configuration saved", so check `/auto-pause-status`: it lists every value in use and any value it ignored. Keep each warn value above its pause value, or there is no separate warning.
 

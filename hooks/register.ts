@@ -133,6 +133,9 @@ function config(o: Record<string, unknown>) {
     // Relative to the project root, plain characters only, not .git or .claude; anything else falls back (facts.sh applies the same rule).
     dir: ((d: string) => (d && d !== '.' && !d.startsWith('/') && !d.includes('..') && /^[A-Za-z0-9._/-]+$/.test(d) && !/^\.(?:git|claude)(?:\/|$)/i.test(d) ? d : '.handoffs'))(String(o.handoff_dir ?? '').trim().replace(/^\.\//, '').replace(/\/+$/, '').replace(/\/{2,}/g, '/')),
     words: num('handoff_word_budget', 600, 100, 10000),
+    // Context-size handoff: off (0) unless set. Repeats every ctxStep points (0 = once) until a handoff passes.
+    ctxAt: num('context_handoff_at_percent', 0, 0, 99),
+    ctxStep: num('context_renudge_points', 5, 0, 100),
   }
 }
 
@@ -146,6 +149,11 @@ let pending: string | undefined
 let owner: Kind | undefined // the window behind the current warn or pause
 let pause: { kind: Kind; usedAtNotice: number; calls: number; root: string; path: string; prompt: string; notice: string; stopBlocked: boolean; head?: string; fixes?: number; rescues?: number; outside?: boolean; gitRisk?: boolean } | undefined
 let storeKey: string | undefined // `session:<id>`, set at session.start
+// The context-size handoff: the fill it last asked at, the path it named, and whether a handoff has since passed.
+// `queued`: the notice waits for the next tool call (kept apart from `pending`, which the usage pause owns and clears).
+// `asks` counts notices; `blocked` is the ask the turn's end was last sent back for.
+let ctx: { last?: number; path?: string; done?: boolean; notice?: string; asks?: number; blocked?: number; queued?: boolean } = {}
+let ctxNow: number | undefined // the latest context fill reading, for /auto-pause-status
 // Handoffs already compared (or written) in this session: one check per file, and none after this session's own edits began to show.
 const checked = new Set<string>()
 
@@ -154,7 +162,7 @@ let savedJson = ''
 async function save($: $) {
   if (!storeKey) return
   const w = [...windows].map(([k, v]) => [k, { ...v, fired: [...v.fired] }])
-  const json = JSON.stringify({ phase, owner, pending, pause, hasData, windows: w })
+  const json = JSON.stringify({ phase, owner, pending, pause, hasData, windows: w, ctx })
   if (json === savedJson) return // most tool calls change nothing; keep store writes rare
   savedJson = json
   await $.store.set(storeKey, { ...JSON.parse(json), at: await $.clock.now() }).catch(() => {})
@@ -162,17 +170,22 @@ async function save($: $) {
 
 // A new session id (a /clear, or a fresh load) starts from nothing, then from what was saved for it.
 function resetState() {
-  phase = 'normal'; owner = undefined; pending = undefined; pause = undefined
+  phase = 'normal'; owner = undefined; pending = undefined; pause = undefined; ctx = {}
   hasData = false; saidNoData = false; simulated = undefined; simulateAfter = undefined
   windows.clear(); savedJson = ''; checked.clear()
 }
 
 async function restore($: $) {
   const s = (await $.store.get(storeKey!).catch(() => undefined)) as
-    | { phase: Phase; owner?: Kind; pending?: string; pause?: typeof pause; hasData: boolean; windows: [Kind, { key: string; used: number; resetsAt?: string; fired: ('warn' | 'pause')[] }][] }
+    | { phase: Phase; owner?: Kind; pending?: string; pause?: typeof pause; hasData: boolean; windows: [Kind, { key: string; used: number; resetsAt?: string; fired: ('warn' | 'pause')[] }][]; ctx?: typeof ctx }
     | undefined
   if (!s) return
   ;({ phase, owner, pending, pause, hasData } = s)
+  // A store value of the wrong shape (an older or damaged save) must not turn the arithmetic into string joins.
+  const c = (s.ctx && typeof s.ctx === 'object' ? s.ctx : {}) as Record<string, unknown>
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+  const t = (v: unknown) => (typeof v === 'string' ? v : undefined)
+  ctx = { last: n(c.last), path: t(c.path), done: c.done === true, notice: t(c.notice), asks: n(c.asks), blocked: n(c.blocked), queued: c.queued === true }
   for (const [k, v] of s.windows) windows.set(k, { ...v, fired: new Set(v.fired) })
 }
 
@@ -295,7 +308,7 @@ async function onReading($: $, rateLimits: readonly SessionRateLimit[]) {
         w.fired.add('warn')
         owner = r.kind
         phase = 'warned'
-        pending = `AUTO-PAUSE: warning. ${usage(r.kind, w.used, w.resetsAt)}\nPrefer finishing the current step over starting new work, and keep your task list current. A pause notice follows at ${cfg.pause[r.kind]}% left.`
+        pending = `${pending ? `${pending}\n\n` : ''}AUTO-PAUSE: warning. ${usage(r.kind, w.used, w.resetsAt)}\nPrefer finishing the current step over starting new work, and keep your task list current. A pause notice follows at ${cfg.pause[r.kind]}% left.`
       }
     }
   }
@@ -314,14 +327,15 @@ function resumePrompt(root: string, path: string, inGit: boolean) {
   return `Resume paused work in ${root}.\nRead ${path} first. It is your only context from the previous session.\n${check}\nRead only the files it points to unless you need more, and ask the user before doing anything outside its Goal.\nIf the user tells you something in this session that differs from the handoff, follow the user.`
 }
 
-async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {
+// Where a new handoff goes and what the notice tells Claude about the repo. `tag` names the trigger in the file name.
+async function prepare($: $, tag: string) {
   const top = await git($, 'rev-parse', '--show-toplevel')
   const root = top || (await $.session.cwd())
   const dir = `${root}/${cfg.dir}`
   // Two sessions pausing in the same minute must not pick the same name: add a short session id.
   const id = storeKey?.slice('session:'.length)
   const sid = id && id !== 'unknown' ? id.replace(/[^A-Za-z0-9]/g, '').slice(0, 6) : ''
-  const base = `${dir}/${stamp(new Date(await $.clock.now()), 'T')}-auto-pause${sid ? `-${sid}` : ''}`
+  const base = `${dir}/${stamp(new Date(await $.clock.now()), 'T')}-${tag}${sid ? `-${sid}` : ''}`
   let path = `${base}.md`
   for (let n = 2; await taken($, path); n++) path = `${base}-${n}.md`
   let repo = 'not a git repository'
@@ -344,7 +358,11 @@ async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {
   // A handoff folder that resolves outside the project (a symlink shipped in the repo) is never auto-approved.
   // Stat without resolving sees a link even when it leads nowhere; such a folder counts as outside too.
   const outside = (await taken($, dir)) && !(await inside($, dir, root))
-  const prompt = resumePrompt(root, path, !!top)
+  return { root, path, repo, head, gitRisk, outside, inGit: !!top, prompt: resumePrompt(root, path, !!top) }
+}
+
+async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {
+  const { root, path, repo, head, gitRisk, outside, prompt } = await prepare($, 'auto-pause')
   const notice = [
     `AUTO-PAUSE: pause threshold reached. ${usage(kind, used, resetsAt)} (This comes from the auto-pause plugin the user installed to save work before the usage limit.)`,
     `Do not start new work. Finish or revert the step in progress (at most ${cfg.gateCalls} more tool calls), then use the writing-handoffs skill and write exactly the handoff path below, in under ${cfg.words} words.`,
@@ -356,6 +374,47 @@ async function startPause($: $, kind: Kind, used: number, resetsAt?: string) {
   phase = 'pausing'
   pause = { kind, usedAtNotice: used, calls: 0, root, path, prompt, notice, stopBlocked: false, head, fixes: 0, rescues: 0, outside, gitRisk }
   pending = notice
+}
+
+// Context fill is not a hard limit (the engine compacts), so this only asks: no gate, no auto-approval, and the
+// next session is proposed for the user to start, never started for them.
+async function onContext($: $, c: { percent?: number; window?: number } | undefined) {
+  const pct = c?.percent
+  if (typeof pct !== 'number') return
+  ctxNow = pct
+  if (!cfg.ctxAt || ctx.done) return
+  // Context fell (a compaction) with no handoff yet: measure the next ask from here, not from the old high.
+  if (ctx.last !== undefined && pct < ctx.last && cfg.ctxStep > 0) ctx.last = pct
+  if (pct < cfg.ctxAt) return
+  if (phase === 'pausing' || phase === 'gated' || phase === 'paused') return // the usage pause owns the session
+  const again = ctx.last !== undefined
+  if (again && (cfg.ctxStep <= 0 || pct < ctx.last! + cfg.ctxStep)) return
+  const p = await prepare($, 'context')
+  if (p.outside) {
+    // Never name a path through a folder that leads outside the project.
+    ctx.done = true
+    $.ui.toast(`auto-pause: the handoff folder ${cfg.dir} leads outside the project, so no context handoff was asked for.`)
+    return
+  }
+  // A repeat keeps the first path, so the resume prompt Claude may have copied stays right.
+  const path = ctx.path ?? p.path
+  const prompt = ctx.path ? resumePrompt(p.root, path, p.inGit) : p.prompt
+  ctx.path = path
+  ctx.last = pct
+  const notice = [
+    `AUTO-PAUSE: context handoff. Context is ${pct}% full${c?.window ? ` (${Math.round(c.window / 1000)}k-token window)` : ''}; the user set a handoff at ${cfg.ctxAt}%.${again ? ' The handoff asked for earlier has not been written yet. Do it now.' : ''} (This comes from the auto-pause plugin the user installed.)`,
+    `Finish the step in progress and start nothing new. Then use the writing-handoffs skill and write exactly the handoff path below, in under ${cfg.words} words. This is not a usage pause: write "reason: context" and leave usage and reset time out.`,
+    `Handoff path: ${path}`,
+    `Repo state: ${p.repo}`,
+    // Before the prompt, never after it: a line after the prompt gets copied into it (seen in a live run).
+    'After the handoff passes its check: if the start_session tool is available (Claude desktop app), propose the next session with it (initiation "own_initiative", context "fresh", the resume prompt below as its prompt, and the handoff\'s Next session model and effort) so the user can start it with one click. Never start it yourself.',
+    'Resume prompt (put it verbatim at the top of the handoff, and end your turn with it in a code block):',
+    prompt,
+  ].join('\n')
+  // The newest notice replaces an undelivered older one, so the same ask never arrives twice.
+  ctx.notice = notice
+  ctx.queued = true
+  ctx.asks = (ctx.asks ?? 0) + 1
 }
 
 // Keep handoffs out of commits without touching tracked files.
@@ -418,6 +477,8 @@ async function finishPause($: $, outcome: Outcome = 'verified') {
   pending = undefined
   // No file (a release before any handoff, a fallback that could not write) must not leave a prompt pointing at it.
   if (!(await $.fs.exists(pause.path).catch(() => false))) return logOutcome($, outcome)
+  // A usage handoff on disk answers an open context ask too: the session is ending either way.
+  if (ctx.last !== undefined) ctx.done = true
   await $.store.set(`last:${pause.root}`, { path: pause.path, prompt: pause.prompt, at: new Date(await $.clock.now()).toISOString(), outcome })
   await logOutcome($, outcome)
 }
@@ -558,6 +619,7 @@ export const register: Register = (on, options) => {
 
   on('session.measure', async ($, e, next) => {
     await onReading($, e.rateLimits).catch(() => {})
+    await onContext($, e.context).catch(() => {})
     await save($)
     return next(e)
   })
@@ -622,7 +684,10 @@ export const register: Register = (on, options) => {
         await appendFacts($, String(file), text, root || (await $.session.cwd()))
         if (active) await finishPause($)
         checked.add(abs)
-        context.push(`AUTO-PAUSE: handoff OK. End your turn now with the handoff path${active ? `, when usage resets` : ''}, the "Next session" line, and the resume prompt verbatim in a \`\`\`text block.`)
+        // Only the path the context notice named answers it: an older handoff edited now says nothing about this session.
+        const forCtx = !active && ctx.last !== undefined && !ctx.done && abs === ctx.path
+        if (forCtx) ctx.done = true
+        context.push(`AUTO-PAUSE: handoff OK. End your turn now with the handoff path${active ? `, when usage resets` : ''}, the "Next session" line, and the resume prompt verbatim in a \`\`\`text block.${forCtx ? ' In the desktop app, first propose the next session with start_session as the context handoff notice said.' : ''}`)
       } else if (problems.length && active && (pause!.fixes = (pause!.fixes ?? 0) + 1) >= MAX_FIXES) {
         // Never lock a session on validation: after three tries the gate opens, logged as released.
         await finishPause($, 'released')
@@ -640,6 +705,8 @@ export const register: Register = (on, options) => {
       if (was) context.push(await resumeCheck($, was, abs, root))
     }
     if (pending) { context.unshift(pending); pending = undefined }
+    // The context ask waits while a usage pause owns the session, and goes to the main thread only.
+    if (ctx.queued && ctx.notice && !ctx.done && (phase === 'normal' || phase === 'warned')) { context.push(ctx.notice); ctx.queued = false }
     await save($)
     return context.length ? { ...r, context: [...(r.context ?? []), ...context] } : r
   }).catch(($, e, next) => next(e)) // fail open: a mod bug must never brick a session
@@ -657,6 +724,14 @@ export const register: Register = (on, options) => {
   // If Claude ends the turn before the handoff, send it back once.
   // A second end without a valid handoff gets the facts-only one, so the turn can always end.
   on('classic.Stop', async ($, e, next) => {
+    // A context nudge the turn ended on without a handoff is sent back once per nudge (a notice alone was skipped
+    // in 1 of 5 live Haiku runs); the next end goes through, so a user who wants no handoff is never stuck.
+    if ((phase === 'normal' || phase === 'warned') && ctx.asks && !ctx.done && ctx.notice && ctx.blocked !== ctx.asks) {
+      ctx.blocked = ctx.asks
+      ctx.queued = false
+      await save($)
+      return { block: `${ctx.notice}\nThis notice is from the auto-pause plugin's context_handoff_at_percent setting, which the user turned on. Write the handoff now, unless the user said in this conversation not to.` }
+    }
     if ((phase !== 'pausing' && phase !== 'gated') || !pause) return next(e)
     if (pause.stopBlocked) {
       await writeFallback($, 'Claude ended its turn twice without a valid handoff.').catch(() => {})
@@ -700,7 +775,8 @@ export const register: Register = (on, options) => {
     for (const [kind, w] of windows) lines.push(`${usage(kind, w.used, w.resetsAt)}`)
     if (!hasData) lines.push("No usage data yet. It arrives with Claude's first reply on a Pro or Max plan; API keys and Team or Enterprise seats never send it, so the plugin stays idle.")
     lines.push(`Thresholds: warn at ${cfg.warn.five_hour}% left, pause at ${cfg.pause.five_hour}% left (weekly ${cfg.warn.seven_day}/${cfg.pause.seven_day}).`)
-    lines.push(`Gate after ${cfg.gateCalls} tool calls or ${cfg.gatePoints} points. Handoff folder ${cfg.dir}. Word budget ${cfg.words}.`, ...cfg.notes)
+    lines.push(`Gate after ${cfg.gateCalls} tool calls or ${cfg.gatePoints} points. Handoff folder ${cfg.dir}. Word budget ${cfg.words}.`)
+    lines.push(`Context handoff: ${cfg.ctxAt ? `at ${cfg.ctxAt}% full, ${cfg.ctxStep ? `asked again every ${cfg.ctxStep} points` : 'asked once'}` : 'off (context_handoff_at_percent is 0)'}. Context now: ${ctxNow === undefined ? 'no reading yet' : `${ctxNow}%`}.${ctx.done ? ' Handoff written for this session.' : ctx.last !== undefined ? ` Asked at ${ctx.last}%, not written yet: ${ctx.path}` : ''}`, ...cfg.notes)
     if (last) lines.push('', `Latest handoff for ${root} (${last.at}): ${last.path}`, 'Resume prompt:', '```text', last.prompt, '```')
     else if (phase === 'normal') lines.push('', 'Nothing to do yet. When usage reaches the pause point, Claude writes a handoff and this shows its resume prompt.')
     if (log.length) {

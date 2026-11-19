@@ -1236,3 +1236,187 @@ describe('mutation: each corruption of a good handoff is caught', () => {
       expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: corrupt(handoff(prompt), path) } as never))).toContain('needs fixes')
     })
 })
+
+describe('context handoff', () => {
+  const full = (percent: number, used = 50) => ({
+    context: { window: 200000, tokens: percent * 2000, percent },
+    rateLimits: [{ kind: 'five_hour', percentUsed: used, resetsAt: RESETS }],
+    changed: ['context' as const],
+  })
+  const notice = async ($: any) => ctx(await $.tool.call(bash))
+
+  test('off unless context_handoff_at_percent is set', async ($, on) => {
+    world(on); await start($)
+    await $.session.measure(full(95))
+    expect(await notice($)).not.toContain('context handoff')
+  })
+
+  test('asks once at the threshold, names a path, and proposes the next session', { options: { context_handoff_at_percent: 25 } }, async ($, on) => {
+    world(on); await start($)
+    await $.session.measure(full(24))
+    expect(await notice($)).toBe('')
+    await $.session.measure(full(26))
+    const n = await notice($)
+    expect(n).toContain('AUTO-PAUSE: context handoff. Context is 26% full (200k-token window); the user set a handoff at 25%.')
+    expect(n).toMatch(/^Handoff path: \/Users\/me\/My Projects\/app\/\.handoffs\/\d{4}-\d\d-\d\dT\d{4}-context\.md$/m)
+    expect(n).toContain('propose the next session with it (initiation "own_initiative"')
+    expect(n).toContain('Never start it yourself.')
+    await $.session.measure(full(28))
+    expect(await notice($)).toBe('') // under the renudge step
+  })
+
+  test('repeats every 5 points with the same path until a handoff passes, then stops', { options: { context_handoff_at_percent: 25 } }, async ($, on) => {
+    const w = world(on); await start($)
+    await $.session.measure(full(25))
+    const first = await notice($)
+    const path = /^Handoff path: (.*)$/m.exec(first)![1]!
+    const prompt = first.split('end your turn with it in a code block):\n')[1]!
+    expect(prompt.trim().endsWith('If the user tells you something in this session that differs from the handoff, follow the user.')).toBe(true)
+    await $.session.measure(full(30))
+    const again = await notice($)
+    expect(again).toContain('The handoff asked for earlier has not been written yet. Do it now.')
+    expect(again).toContain(`Handoff path: ${path}`)
+    const r = ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))
+    expect(r).toContain('handoff OK')
+    expect(r).toContain('first propose the next session with start_session')
+    expect(w.files.get(path)).toContain('## Session facts (added by auto-pause, read from the session)')
+    await $.session.measure(full(60))
+    expect(await notice($)).toBe('')
+  })
+
+  test('renudge 0 asks only once', { options: { context_handoff_at_percent: 25, context_renudge_points: 0 } }, async ($, on) => {
+    world(on); await start($)
+    await $.session.measure(full(25))
+    expect(await notice($)).toContain('context handoff')
+    await $.session.measure(full(90))
+    expect(await notice($)).toBe('')
+  })
+
+  test('never gates tools or auto-approves the handoff', { options: { context_handoff_at_percent: 25 } }, async ($, on) => {
+    world(on); await start($)
+    await $.session.measure(full(40))
+    const path = /^Handoff path: (.*)$/m.exec(await notice($))![1]!
+    for (let i = 0; i < 20; i++) expect((await $.tool.call(bash)).deny).toBeUndefined()
+    expect((await $.tool.check({ tool: 'Write', input: { file_path: path, content: 'x' } } as never)).decision).toBe('ask')
+    expect((await $.tool.check({ tool: 'Bash', input: { command: 'git status' } } as never)).decision).toBe('ask')
+  })
+
+  test('stays quiet while a usage pause owns the session', { options: { context_handoff_at_percent: 25 } }, async ($, on) => {
+    world(on); await start($)
+    await pauseNotice($)
+    await $.session.measure(full(50, 96))
+    expect(await notice($)).not.toContain('context handoff')
+  })
+
+  test('survives a reload of the mod: the store brings back where it asked', { options: { context_handoff_at_percent: 25 } }, async ($, on) => {
+    const path = `${ROOT}/.handoffs/2026-10-19T1002-context.md`
+    const saved = { phase: 'normal', hasData: true, windows: [], ctx: { last: 26, path } }
+    world(on, {}, true, { 'session:unknown': saved }); await start($)
+    await $.session.measure(full(27))
+    expect(await notice($)).toBe('')
+    await $.session.measure(full(31))
+    expect(await notice($)).toContain(`Handoff path: ${path}`)
+  })
+
+  test('status shows the setting, the reading and what was asked', { options: { context_handoff_at_percent: 25 } }, async ($, on) => {
+    world(on); await start($)
+    expect(await status($)).toContain('Context handoff: at 25% full, asked again every 5 points. Context now: no reading yet.')
+    await $.session.measure(full(26))
+    await notice($)
+    expect(await status($)).toMatch(/Context now: 26%\. Asked at 26%, not written yet: .*-context\.md/)
+  })
+
+  test('a turn that ends without the handoff is sent back once per nudge', { options: { context_handoff_at_percent: 25 } }, async ($, on) => {
+    world(on); await start($)
+    expect((await $.classic.Stop({ stop_hook_active: false })).block).toBeUndefined() // nothing asked yet
+    await $.session.measure(full(26))
+    await notice($)
+    const b = (await $.classic.Stop({ stop_hook_active: false })).block
+    expect(b).toContain('AUTO-PAUSE: context handoff.')
+    expect(b).toContain('unless the user said in this conversation not to')
+    expect((await $.classic.Stop({ stop_hook_active: true })).block).toBeUndefined()
+    expect((await $.classic.Stop({ stop_hook_active: false })).block).toBeUndefined()
+    await $.session.measure(full(31)) // the next nudge gets its own one send-back
+    await notice($)
+    expect((await $.classic.Stop({ stop_hook_active: false })).block).toContain('has not been written yet')
+    expect((await $.classic.Stop({ stop_hook_active: false })).block).toBeUndefined()
+  })
+
+  test('no send-back once the handoff passed', { options: { context_handoff_at_percent: 25 } }, async ($, on) => {
+    world(on); await start($)
+    await $.session.measure(full(26))
+    const n = await notice($)
+    const path = /^Handoff path: (.*)$/m.exec(n)![1]!
+    const prompt = n.split('end your turn with it in a code block):\n')[1]!
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))).toContain('handoff OK')
+    expect((await $.classic.Stop({ stop_hook_active: false })).block).toBeUndefined()
+  })
+
+  test('review 1: after a usage handoff, an open context ask neither sends the turn back nor asks again', { options: { context_handoff_at_percent: 25 } }, async ($, on) => {
+    world(on); await start($)
+    await $.session.measure(full(26))
+    expect(await notice($)).toContain('context handoff')
+    const { path, prompt } = await pauseNotice($)
+    expect(ctx(await $.tool.call({ tool: 'Write', file_path: path, content: handoff(prompt) } as never))).toContain('handoff OK')
+    expect((await $.classic.Stop({ stop_hook_active: false })).block).toBeUndefined()
+    await $.session.measure(full(60, 97))
+    expect(await notice($)).not.toContain('context handoff')
+  })
+
+  test('review 2: a handoff at another path does not answer the context ask', { options: { context_handoff_at_percent: 25 } }, async ($, on) => {
+    world(on); await start($)
+    await $.session.measure(full(26))
+    const n = await notice($)
+    const path = /^Handoff path: (.*)$/m.exec(n)![1]!
+    const other = `${ROOT}/.handoffs/2026-10-01T0900-old.md`
+    const prompt = n.split('end your turn with it in a code block):\n')[1]!.replace(path, other)
+    const r = ctx(await $.tool.call({ tool: 'Write', file_path: other, content: handoff(prompt) } as never))
+    expect(r).toContain('handoff OK')
+    expect(r).not.toContain('propose the next session')
+    expect((await $.classic.Stop({ stop_hook_active: false })).block).toContain('context handoff')
+    await $.session.measure(full(31))
+    expect(await notice($)).toContain('has not been written yet')
+  })
+
+  test('review 3: after a compaction the next ask comes at the threshold, not 5 above the old high', { options: { context_handoff_at_percent: 25 } }, async ($, on) => {
+    world(on); await start($)
+    await $.session.measure(full(90))
+    expect(await notice($)).toContain('context handoff')
+    expect((await $.classic.Stop({ stop_hook_active: false })).block).toBeDefined()
+    await $.session.measure(full(20)) // compacted
+    expect((await $.classic.Stop({ stop_hook_active: false })).block).toBeUndefined() // no new ask, no new send-back
+    await $.session.measure(full(24))
+    expect(await notice($)).toBe('')
+    await $.session.measure(full(25))
+    expect(await notice($)).toContain('has not been written yet')
+  })
+
+  test('review 4: a usage warning does not swallow the context ask, and repeats are not doubled', { options: { context_handoff_at_percent: 25, warn_at_percent_left: 10 } }, async ($, on) => {
+    world(on); await start($)
+    await $.session.measure(full(26, 91))
+    await $.session.measure(full(31, 91)) // second ask before any tool call
+    const n = await notice($)
+    expect(n).toContain('AUTO-PAUSE: warning.')
+    expect(n.match(/AUTO-PAUSE: context handoff/g)?.length).toBe(1)
+    expect(n).toContain('Context is 31% full')
+  })
+
+  test('review 5: a damaged saved ctx is reset field by field', { options: { context_handoff_at_percent: 25 } }, async ($, on) => {
+    world(on, {}, true, { 'session:unknown': { phase: 'normal', hasData: true, windows: [], ctx: { last: '26', path: 7, done: 'yes' } } }); await start($)
+    await $.session.measure(full(26))
+    const n = await notice($)
+    expect(n).toContain('Context is 26% full')
+    expect(n).not.toContain('has not been written yet')
+  })
+
+  test('status says off by default', async ($, on) => {
+    world(on); await start($)
+    expect(await status($)).toContain('Context handoff: off (context_handoff_at_percent is 0).')
+  })
+
+  test('state saved before this version (no ctx) loads and asks normally', { options: { context_handoff_at_percent: 25 } }, async ($, on) => {
+    world(on, {}, true, { 'session:unknown': { phase: 'normal', hasData: true, windows: [] } }); await start($)
+    await $.session.measure(full(30))
+    expect(await notice($)).toContain('context handoff')
+  })
+})

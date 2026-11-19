@@ -105,6 +105,7 @@ In the Terminal app, run `claude`, type `/plugin configure auto-pause@k45sle`, t
 
 - `pause_at_percent_left` (default 4): when Claude stops and saves its note.
 - `warn_at_percent_left` (default 7): when Claude is told to wrap up. Keep it above the pause number.
+- `context_handoff_at_percent` (default 0, off): also ask for a handoff when the chat gets long, for example 25 for a quarter of the context window. Claude writes the same checked note and, in the Desktop app, offers you the next session to start with one click.
 
 The full list is in [docs/details.md](docs/details.md#all-settings).
 

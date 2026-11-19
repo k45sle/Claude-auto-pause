@@ -1,6 +1,6 @@
 {
   "name": "auto-pause",
-  "version": "0.1.15",
+  "version": "0.2.0",
   "description": "Pauses Claude Code at a safe point before the usage limit and writes a handoff with a ready-to-paste resume prompt.",
   "author": {
     "name": "Kassle",
@@ -63,6 +63,18 @@
       "title": "Handoff word budget",
       "description": "Target handoff length in words, resume prompt included (100-10000). A handoff over 1.2 times this is sent back to be shortened.",
       "default": 600
+    },
+    "context_handoff_at_percent": {
+      "type": "number",
+      "title": "Context handoff at % full",
+      "description": "Ask Claude for a handoff when the context window is this full (1-99), so a fresh session can take over before the chat gets long. 0 turns it off. Nothing is blocked; in the desktop app Claude proposes the next session for you to start.",
+      "default": 0
+    },
+    "context_renudge_points": {
+      "type": "number",
+      "title": "Context handoff repeat every",
+      "description": "If no handoff was written, ask again each time context grows this many more percent (0-100). 0 asks only once.",
+      "default": 5
     }
   }
 }
